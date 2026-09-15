@@ -33,6 +33,8 @@ from face_swap_studio.core.usage_log import UsageLog
 from face_swap_studio.engines.base import EngineConfig
 from face_swap_studio.engines.deepfacelive_stub import create_engine
 from face_swap_studio.engines.modes import MODE_ENGINE_IDS, MODE_LABELS_ZH, WorkMode
+from face_swap_studio.licensing.plans import PlanTier
+from face_swap_studio.licensing.store import LicenseStore
 from face_swap_studio.ui.settings_dialog import SettingsDialog
 
 
@@ -48,6 +50,7 @@ class MainWindow(QMainWindow):
 
         self.store = ProjectStore(projects_root or _default_projects_root())
         self.log = UsageLog(self.store.root.parent / "logs" / "usage.jsonl")
+        self.license = LicenseStore(self.store.root.parent / "license.json")
         self.current: Optional[ProjectMeta] = None
         self.engine = create_engine("placeholder")
         self.settings = {
