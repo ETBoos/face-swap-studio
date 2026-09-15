@@ -20,6 +20,7 @@ class FaceFusionStubEngine(FaceSwapEngine):
         self._cfg: Optional[EngineConfig] = None
         self._status = EngineStatus.STUB
         self._error: Optional[str] = None
+        self._running = False
 
     def capabilities(self) -> EngineCapabilities:
         return EngineCapabilities(
@@ -27,39 +28,45 @@ class FaceFusionStubEngine(FaceSwapEngine):
             version="stub-0.1",
             supports_live_camera=True,
             supports_gpu=True,
-            notes="简易模式：无需 .dfm，配置目标脸即可；需本机安装 FaceFusion。",
+            notes="简易模式：无需 .dfm；需本机安装 FaceFusion 后接线。",
             is_stub=True,
         )
 
     def status(self) -> EngineStatus:
         return self._status
 
-    def configure(self, config: EngineConfig) -> None:
+    def initialize(self, config: EngineConfig) -> None:
         self._cfg = config
         faces = config.source_face_paths or []
         if not faces:
             self._status = EngineStatus.ERROR
             self._error = "简易模式需要至少一张目标脸图片"
-            return
+            raise RuntimeError(self._error)
         root = config.extra.get("facefusion_root") or self._root
         if root and Path(root).exists():
             self._status = EngineStatus.READY
             self._error = None
         else:
             self._status = EngineStatus.STUB
-            self._error = "未检测到 FaceFusion 安装目录。请在设置中填写 facefusion_root。"
+            self._error = "FaceFusion 尚未接入（stub）。安装后填写 facefusion_root。"
+            raise RuntimeError("FaceFusion 尚未接入")
 
     def start(self) -> None:
-        if self._status not in (EngineStatus.READY, EngineStatus.RUNNING):
-            raise RuntimeError(self._error or "FaceFusion 未就绪（仍为 stub）")
-        self._status = EngineStatus.RUNNING
+        self._running = True
+        if self._status == EngineStatus.READY:
+            self._status = EngineStatus.RUNNING
 
     def stop(self) -> None:
+        self._running = False
         if self._status == EngineStatus.RUNNING:
             self._status = EngineStatus.READY
 
-    def grab(self) -> EngineFrame:
-        raise RuntimeError("FaceFusion 真推理尚未接线（待 Win+NVIDIA 联调）。")
+    def set_source_faces(self, paths: list[str]) -> None:
+        if self._cfg is not None:
+            self._cfg.source_face_paths = list(paths)
+
+    def read_frame(self) -> Optional[EngineFrame]:
+        return None
 
     def last_error(self) -> Optional[str]:
         return self._error

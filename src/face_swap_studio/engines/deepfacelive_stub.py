@@ -21,6 +21,7 @@ class DeepFaceLiveStubEngine(FaceSwapEngine):
         self._status = EngineStatus.STUB
         self._error: Optional[str] = None
         self._dfm: Optional[Path] = None
+        self._running = False
 
     def capabilities(self) -> EngineCapabilities:
         return EngineCapabilities(
@@ -35,7 +36,7 @@ class DeepFaceLiveStubEngine(FaceSwapEngine):
     def status(self) -> EngineStatus:
         return self._status
 
-    def configure(self, config: EngineConfig) -> None:
+    def initialize(self, config: EngineConfig) -> None:
         self._cfg = config
         dfm = config.extra.get("dfm_path") or ""
         path = Path(dfm) if dfm else None
@@ -43,7 +44,7 @@ class DeepFaceLiveStubEngine(FaceSwapEngine):
             self._status = EngineStatus.ERROR
             self._error = "顶级模式需要有效的 .dfm 文件路径"
             self._dfm = None
-            return
+            raise RuntimeError("DeepFaceLive 尚未接入：缺少 .dfm")
         self._dfm = path
         dfl_root = config.extra.get("deepfacelive_root")
         if dfl_root and Path(dfl_root).exists():
@@ -51,19 +52,25 @@ class DeepFaceLiveStubEngine(FaceSwapEngine):
             self._error = None
         else:
             self._status = EngineStatus.STUB
-            self._error = "已选定 .dfm，但未检测到 DeepFaceLive 安装目录（待 2 号联调）。"
+            self._error = "DeepFaceLive 尚未接入（stub）"
+            raise RuntimeError("DeepFaceLive 尚未接入")
 
     def start(self) -> None:
-        if self._status not in (EngineStatus.READY, EngineStatus.RUNNING):
-            raise RuntimeError(self._error or "DeepFaceLive 未就绪（仍为 stub）")
-        self._status = EngineStatus.RUNNING
+        self._running = True
+        if self._status == EngineStatus.READY:
+            self._status = EngineStatus.RUNNING
 
     def stop(self) -> None:
+        self._running = False
         if self._status == EngineStatus.RUNNING:
             self._status = EngineStatus.READY
 
-    def grab(self) -> EngineFrame:
-        raise RuntimeError(f"DeepFaceLive 真推理尚未接线。dfm={self._dfm}")
+    def set_source_faces(self, paths: list[str]) -> None:
+        if self._cfg is not None:
+            self._cfg.source_face_paths = list(paths)
+
+    def read_frame(self) -> Optional[EngineFrame]:
+        return None
 
     def last_error(self) -> Optional[str]:
         return self._error
