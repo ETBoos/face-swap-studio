@@ -8,6 +8,12 @@
 - [ ] 摄像头：1080p@30 可稳出流（USB 带宽别跟多设备抢）
 - [ ] 关闭无关占 GPU 程序（浏览器硬件加速、其他 AI 工具）
 
+
+## 0.1 版本与构建（必读）
+- [ ] `.dfm` 必须与导出它的 **DeepFaceLab / DeepFaceLive 版本匹配**
+- [ ] RTX 卡优先安装 **NVIDIA/CUDA 构建**的 DeepFaceLive（通常明显快于 DX12 路线）
+- [ ] 简易模式另装 FaceFusion；与 Pro 模式可同机共存，由壳切换
+
 ## 1. 软件安装
 - [ ] 安装 **DeepFaceLive**（与导出 `.dfm` 的 DFL 版本匹配）
 - [ ] （可选）安装本仓库 `face-swap-studio`：`scripts\setup-win.bat` → `scripts\start-win.bat`

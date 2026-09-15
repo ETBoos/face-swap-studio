@@ -32,6 +32,7 @@ from face_swap_studio.core.project import ProjectMeta, ProjectStore
 from face_swap_studio.core.usage_log import UsageLog
 from face_swap_studio.engines.base import EngineConfig
 from face_swap_studio.engines.deepfacelive_stub import create_engine
+from face_swap_studio.engines.modes import MODE_ENGINE_IDS, MODE_LABELS_ZH, WorkMode
 from face_swap_studio.ui.settings_dialog import SettingsDialog
 
 
@@ -55,6 +56,10 @@ class MainWindow(QMainWindow):
             "camera_index": 0,
             "gpu_device": "cuda:0",
             "engine": "placeholder",
+            "work_mode": WorkMode.SIMPLE.value,
+            "dfm_path": "",
+            "facefusion_root": "",
+            "deepfacelive_root": "",
         }
         self._previewing = False
 
@@ -79,6 +84,24 @@ class MainWindow(QMainWindow):
             "padding:10px;border-radius:4px;"
         )
         root.addWidget(banner)
+
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("工作模式"))
+        from PySide6.QtWidgets import QComboBox
+
+        self.mode_combo = QComboBox()
+        for mode, label in MODE_LABELS_ZH.items():
+            self.mode_combo.addItem(label, mode.value)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        mode_row.addWidget(self.mode_combo, stretch=1)
+        self.btn_dfm = QPushButton("选择 .dfm…")
+        self.btn_dfm.clicked.connect(self._choose_dfm)
+        self.btn_dfm.setEnabled(False)
+        mode_row.addWidget(self.btn_dfm)
+        self.dfm_label = QLabel("未选择 .dfm")
+        self.dfm_label.setStyleSheet("color:#666;")
+        mode_row.addWidget(self.dfm_label, stretch=1)
+        root.addLayout(mode_row)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
         root.addWidget(splitter, stretch=1)
