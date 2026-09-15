@@ -424,6 +424,36 @@ class MainWindow(QMainWindow):
         self.log.record("export_frame", project=self.current.name, path=str(out))
         QMessageBox.information(self, "已导出", f"参考帧已保存:\n{out}")
 
+
+    def _on_mode_changed(self, _index: int = 0) -> None:
+        mode_val = self.mode_combo.currentData()
+        mode = WorkMode(mode_val)
+        if mode == WorkMode.PRO and not self.license.state.allows_pro_dfm():
+            QMessageBox.information(
+                self,
+                "授权提示",
+                "顶级 .dfm 模式需要 Pro/Studio 且 USDT 开授权后启用。\n"
+                f"当前档位: {self.license.state.tier.value} active={self.license.state.active}",
+            )
+        self.settings["work_mode"] = mode_val
+        self.settings["engine"] = MODE_ENGINE_IDS[mode]
+        self.engine = create_engine(self.settings["engine"])
+        self.btn_dfm.setEnabled(mode == WorkMode.PRO)
+        self.statusBar().showMessage(
+            f"{MODE_LABELS_ZH[mode]} | 授权:{self.license.state.tier.value}"
+        )
+        self.log.record("mode_change", mode=mode_val, tier=self.license.state.tier.value)
+
+    def _choose_dfm(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择 DeepFaceLive 模型 (.dfm)", "", "DFM (*.dfm);;所有文件 (*)"
+        )
+        if not path:
+            return
+        self.settings["dfm_path"] = path
+        self.dfm_label.setText(Path(path).name)
+        self.log.record("dfm_selected", path=path)
+
     def closeEvent(self, event) -> None:  # noqa: N802
         self._timer.stop()
         try:
