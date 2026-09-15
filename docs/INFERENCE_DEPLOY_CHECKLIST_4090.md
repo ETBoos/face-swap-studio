@@ -63,3 +63,9 @@
 - 当前公开仓是**产品壳**（项目、授权勾选、占位预览）
 - 真换脸 = DeepFaceLive + 客户/项目自备 `.dfm`
 - 商用分发策略另案；本清单只解决技术跑通
+
+
+## 顶级模式装机（编程助手2号）
+- 优先 NVIDIA 构建；`.dfm` 与导出 DFL 版本匹配
+- 设置 `DEEPFACELIVE_ROOT` 或壳内 `deepfacelive_root`
+- 详见 `docs/PRO_DEEPFACELIVE.md`；脚本 `scripts/setup-deepfacelive-win.ps1`

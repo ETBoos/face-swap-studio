@@ -65,13 +65,13 @@ def test_placeholder_engine_synthetic():
     eng.shutdown()
 
 
-def test_dfl_stub_raises():
+def test_dfl_requires_dfm():
     from face_swap_studio.engines.base import EngineConfig
-    from face_swap_studio.engines.deepfacelive_stub import DeepFaceLiveStubEngine, create_engine
+    from face_swap_studio.engines.deepfacelive import DeepFaceLiveEngine, create_engine
 
-    eng = DeepFaceLiveStubEngine()
-    assert eng.capabilities().is_stub is True
-    with pytest.raises(RuntimeError, match="尚未接入"):
+    eng = DeepFaceLiveEngine()
+    assert eng.capabilities().name == "deepfacelive"
+    with pytest.raises(RuntimeError, match="dfm"):
         eng.initialize(EngineConfig())
 
     ph = create_engine("placeholder")
