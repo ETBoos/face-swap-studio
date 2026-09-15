@@ -2,16 +2,17 @@
 
 DeepFaceLive is a separate Win app. Official CLI only accepts:
   python main.py run DeepFaceLive [--userdata-dir PATH] [--no-cuda]
-.dfm models are staged into <userdata>/dfm_models/ and selected in the DFL UI
-(Face swapper / DFM). This adapter stages the chosen .dfm and launches the app.
+.dfm models are staged into <userdata>/dfm_models/ and selected in the DFL UI.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import shutil
 import subprocess
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
@@ -23,28 +24,42 @@ from face_swap_studio.engines.base import (
     FaceSwapEngine,
 )
 
-# Common Win install markers (relative to deepfacelive_root)
 _LAUNCHERS = (
     "DeepFaceLive.bat",
     "DeepFaceLive.cmd",
     "main.py",
 )
 
+# Heuristic: real DFM (ONNX-based) packs are usually multi‑MB.
+_MIN_DFM_BYTES = 512 * 1024
+
+
+@dataclass(frozen=True)
+class BuildInfo:
+    kind: str  # "nvidia" | "dx12" | "unknown"
+    evidence: str
+
+
+@dataclass(frozen=True)
+class DfmCheck:
+    ok: bool
+    message: str
+    size_bytes: int = 0
+
 
 def resolve_deepfacelive_root(explicit: Optional[str] = None) -> Optional[Path]:
-    """Find DeepFaceLive install directory."""
+    """Find DeepFaceLive install directory (NVIDIA paths preferred in order)."""
     candidates: list[Path] = []
     if explicit:
         candidates.append(Path(explicit))
     env = os.environ.get("DEEPFACELIVE_ROOT") or os.environ.get("DFL_ROOT")
     if env:
         candidates.append(Path(env))
-    # Common Windows locations (also checked on Linux for docs/tests)
     for base in (
-        Path(r"C:\DeepFaceLive"),
         Path(r"C:\DeepFaceLive_NVIDIA"),
-        Path.home() / "DeepFaceLive",
         Path.home() / "DeepFaceLive_NVIDIA",
+        Path(r"C:\DeepFaceLive"),
+        Path.home() / "DeepFaceLive",
     ):
         candidates.append(base)
     for root in candidates:
@@ -56,6 +71,113 @@ def resolve_deepfacelive_root(explicit: Optional[str] = None) -> Optional[Path]:
     return None
 
 
+def detect_build_kind(root: Path) -> BuildInfo:
+    """Classify NVIDIA vs DX12 build from path + shipped binaries."""
+    name = root.name.lower()
+    text_blob = name
+    # Collect a few file names one level deep (cheap).
+    try:
+        names = [p.name.lower() for p in root.iterdir() if p.is_file()]
+    except OSError:
+        names = []
+    text_blob += " " + " ".join(names[:80])
+
+    nvidia_hits = []
+    if "nvidia" in name or "cuda" in name:
+        nvidia_hits.append(f"路径含 NVIDIA/CUDA：{root.name}")
+    cuda_dlls = [
+        n
+        for n in names
+        if n.startswith("cudnn")
+        or n.startswith("cublas")
+        or n.startswith("cudart")
+        or "nvinfer" in n
+    ]
+    if cuda_dlls:
+        nvidia_hits.append(f"发现 CUDA 相关文件：{', '.join(cuda_dlls[:4])}")
+
+    dx_hits = []
+    if "dx12" in name or "directx" in name:
+        dx_hits.append(f"路径含 DX12/DirectX：{root.name}")
+    dx_dlls = [n for n in names if "d3d12" in n or n.endswith("_dx12.dll")]
+    if dx_dlls:
+        dx_hits.append(f"发现 DX12 相关文件：{', '.join(dx_dlls[:4])}")
+
+    if nvidia_hits and not dx_hits:
+        return BuildInfo("nvidia", "; ".join(nvidia_hits))
+    if dx_hits and not nvidia_hits:
+        return BuildInfo("dx12", "; ".join(dx_hits))
+    if nvidia_hits and dx_hits:
+        # Mixed → prefer nvidia if cuda dlls present
+        if cuda_dlls:
+            return BuildInfo("nvidia", "; ".join(nvidia_hits + dx_hits))
+        return BuildInfo("dx12", "; ".join(dx_hits + nvidia_hits))
+    return BuildInfo("unknown", "未在安装目录检测到明确的 NVIDIA/CUDA 或 DX12 标记")
+
+
+def validate_dfm_file(
+    path: Path,
+    *,
+    expected_hint: Optional[str] = None,
+) -> DfmCheck:
+    """Preflight .dfm before staging. Readable Chinese errors on failure.
+
+    DeepFaceLive treats .dfm as ONNX-compatible graphs. We cannot fully load
+    without onnxruntime; we do size + ONNX/protobuf fingerprint checks, and
+    optional sidecar / filename version hint matching.
+    """
+    if not path.is_file():
+        return DfmCheck(False, f"找不到 .dfm 文件：{path}")
+    if path.suffix.lower() != ".dfm":
+        return DfmCheck(False, f"扩展名必须是 .dfm，当前为：{path.suffix}")
+
+    size = path.stat().st_size
+    if size < _MIN_DFM_BYTES:
+        return DfmCheck(
+            False,
+            f".dfm 过小（{size} 字节），更像损坏或占位文件；真实专模通常 ≥ {_MIN_DFM_BYTES // 1024}KB。"
+            f"请重新从 DeepFaceLab 导出，并确认与当前 DeepFaceLive 版本匹配。",
+            size,
+        )
+
+    head = path.read_bytes()[:4096]
+    # ONNX ModelProto often embeds the ASCII token "onnx" / "ONNX"
+    looks_onnx = (b"onnx" in head.lower()) or head.startswith(b"\x08")
+    if not looks_onnx:
+        return DfmCheck(
+            False,
+            f".dfm 未通过格式预检（未见 ONNX/模型指纹）：{path.name}。"
+            "常见原因：①文件损坏或下到一半；②不是 DeepFaceLive 用的专模；"
+            "③用错版本的 DeepFaceLab 导出。请用与本机 DeepFaceLive 同代的 DFL 重新导出 .dfm。",
+            size,
+        )
+
+    # Optional explicit version hint from config or sidecar
+    sidecar = path.with_suffix(path.suffix + ".version")
+    if not sidecar.is_file():
+        sidecar = path.with_suffix(".version")
+    hint = (expected_hint or "").strip()
+    if not hint and sidecar.is_file():
+        hint = sidecar.read_text(encoding="utf-8", errors="ignore").strip()
+
+    # Filename pattern e.g. face_SAEH64 or _224 / _320 — informational only unless expected set
+    if hint:
+        # Accept if hint appears in filename or sidecar already matched content
+        stem = path.stem.lower()
+        if hint.lower() not in stem and hint.lower() not in path.name.lower():
+            # Still allow if sidecar equals hint (already loaded from sidecar)
+            if not (sidecar.is_file() and sidecar.read_text(encoding="utf-8", errors="ignore").strip() == hint):
+                return DfmCheck(
+                    False,
+                    f".dfm 版本提示不匹配：期望「{hint}」，文件名为「{path.name}」。"
+                    "DeepFaceLive 加载失败时多数是「导出 DFL 版本 ≠ 本机 DFL 版本」。"
+                    "请用同一代 DeepFaceLab 重新导出，或更换匹配的 DeepFaceLive NVIDIA 包。",
+                    size,
+                )
+
+    return DfmCheck(True, "ok", size)
+
+
 def _userdata_dir(root: Path, override: Optional[str] = None) -> Path:
     if override:
         return Path(override).expanduser().resolve()
@@ -65,7 +187,6 @@ def _userdata_dir(root: Path, override: Optional[str] = None) -> Path:
 
 
 def stage_dfm(dfm_path: Path, userdata: Path) -> Path:
-    """Copy .dfm into userdata/dfm_models (DeepFaceLive discovers models there)."""
     models = userdata / "dfm_models"
     models.mkdir(parents=True, exist_ok=True)
     dest = models / dfm_path.name
@@ -80,20 +201,16 @@ def build_launch_command(
     *,
     no_cuda: bool = False,
 ) -> list[str]:
-    """Build process argv for DeepFaceLive NVIDIA / DX12 builds."""
     bat = root / "DeepFaceLive.bat"
     cmd_file = root / "DeepFaceLive.cmd"
     main_py = root / "main.py"
 
-    # Prefer bat on Windows; fall back to python main.py (same flags).
     if sys.platform == "win32" and bat.is_file():
-        # bat wrappers often ignore extra args; still pass via env for docs.
         return [str(bat)]
     if sys.platform == "win32" and cmd_file.is_file():
         return [str(cmd_file)]
 
     py = sys.executable
-    # Some packs ship python.exe beside main.py
     bundled = root / "python.exe"
     if bundled.is_file():
         py = str(bundled)
@@ -118,25 +235,24 @@ class DeepFaceLiveEngine(FaceSwapEngine):
         self._staged: Optional[Path] = None
         self._root: Optional[Path] = None
         self._userdata: Optional[Path] = None
+        self._build: Optional[BuildInfo] = None
         self._proc: Optional[subprocess.Popen] = None
 
     def capabilities(self) -> EngineCapabilities:
         return EngineCapabilities(
             name="deepfacelive",
-            version="0.2.0",
+            version="0.3.0",
             supports_live_camera=True,
             supports_gpu=True,
             notes=(
-                "顶级模式：将 .dfm 放入 userdata/dfm_models 并启动 DeepFaceLive；"
-                "在 DFL 界面 Face swapper 选该模型。优先 NVIDIA 构建；.dfm 须与导出它的 DFL 版本匹配。"
-                "预览在 DeepFaceLive 窗口，壳侧 read_frame 不拉取帧。"
+                "顶级模式：校验 NVIDIA 构建 + .dfm 预检后，将模型放入 userdata/dfm_models 并启动 DeepFaceLive；"
+                "在 DFL 界面 Face swapper 选该模型。预览在 DeepFaceLive 窗口。"
             ),
             is_stub=False,
         )
 
     def status(self) -> EngineStatus:
         if self._proc is not None and self._proc.poll() is not None:
-            # Process exited
             code = self._proc.returncode
             self._proc = None
             if self._status == EngineStatus.RUNNING:
@@ -158,9 +274,13 @@ class DeepFaceLiveEngine(FaceSwapEngine):
             raise RuntimeError(self._error)
 
         path = Path(dfm_raw).expanduser()
-        if not path.is_file() or path.suffix.lower() != ".dfm":
+        check = validate_dfm_file(
+            path,
+            expected_hint=(config.extra.get("dfm_version_hint") or None),
+        )
+        if not check.ok:
             self._status = EngineStatus.ERROR
-            self._error = f"无效的 .dfm：{path}"
+            self._error = check.message
             raise RuntimeError(self._error)
         self._dfm = path.resolve()
 
@@ -168,11 +288,36 @@ class DeepFaceLiveEngine(FaceSwapEngine):
         if root is None:
             self._status = EngineStatus.ERROR
             self._error = (
-                "未找到 DeepFaceLive 安装目录。请设置 extra.deepfacelive_root "
-                "或环境变量 DEEPFACELIVE_ROOT（目录内需有 DeepFaceLive.bat 或 main.py）"
+                "未找到 DeepFaceLive 安装目录。请安装 **NVIDIA 构建**，并设置 "
+                "extra.deepfacelive_root 或环境变量 DEEPFACELIVE_ROOT"
+                "（目录内需有 DeepFaceLive.bat 或 main.py）。"
             )
             raise RuntimeError(self._error)
         self._root = root
+
+        build = detect_build_kind(root)
+        self._build = build
+        require_nvidia = config.extra.get("require_nvidia")
+        if require_nvidia is None:
+            require_nvidia = True
+        if require_nvidia and build.kind == "dx12":
+            self._status = EngineStatus.ERROR
+            self._error = (
+                "检测到 DeepFaceLive **DX12 构建**，顶级实时请改用 **NVIDIA 构建**（RTX 更快）。"
+                f"依据：{build.evidence}。安装目录：{root}"
+            )
+            raise RuntimeError(self._error)
+        if require_nvidia and build.kind == "unknown":
+            # Soft-fail only if allow_unknown_build is set; default warn via error for P0 clarity
+            allow_unknown = bool(config.extra.get("allow_unknown_build"))
+            if not allow_unknown:
+                self._status = EngineStatus.ERROR
+                self._error = (
+                    "无法确认是否为 NVIDIA 构建。"
+                    f"{build.evidence}。请指向含 CUDA/cudnn 的 NVIDIA 包目录，"
+                    f"或在 extra 中设 allow_unknown_build=true（不推荐）。目录：{root}"
+                )
+                raise RuntimeError(self._error)
 
         ud_override = config.extra.get("userdata_dir")
         self._userdata = _userdata_dir(root, ud_override)
@@ -216,12 +361,10 @@ class DeepFaceLiveEngine(FaceSwapEngine):
             self._status = EngineStatus.READY
 
     def set_source_faces(self, paths: list[str]) -> None:
-        # Pro mode uses .dfm, not still-face paths; keep for shell compatibility.
         if self._cfg is not None:
             self._cfg.source_face_paths = list(paths)
 
     def read_frame(self) -> Optional[EngineFrame]:
-        # External DFL UI owns the camera/preview; no frame bridge yet.
         return None
 
     def last_error(self) -> Optional[str]:
