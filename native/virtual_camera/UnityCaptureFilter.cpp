@@ -102,7 +102,9 @@ class CCaptureStream : CSourceStream, IKsPropertySet, IAMStreamConfig, IAMStream
 public:
 	CCaptureStream(CSource* pOwner, HRESULT* phr, int CapNum) : CSourceStream("Stream", phr, pOwner, L"Output")
 	{
-		m_llFrame = m_llFrameMissCount = 0;
+		m_llFrame = 0;
+		m_lastNewFrameTick = 0;
+		m_frameTimeoutMs = 1000;
 		m_prevStartTime = 0;
 		m_avgTimePerFrame = 10000000 / 30;
 		m_pReceiver = new SharedImageMemory(CapNum);
@@ -149,12 +151,13 @@ private:
 				break;}
 
 			case SharedImageMemory::RECEIVERES_NEWFRAME:
-				if (m_llFrameMissCount) m_llFrameMissCount = 0;
+				m_lastNewFrameTick = GetTickCount64();
 				break;
 
 			case SharedImageMemory::RECEIVERES_OLDFRAME:{
-				if (++m_llFrameMissCount < m_llFrameMissMax) break;
-				//Show color pattern when received more than X frames without new image (probably Unity stopped sending data)
+				// Receive waits for an event, so frame counts do not measure elapsed
+				// time. Never keep stale output after the sender's timeout expires.
+				if (m_lastNewFrameTick && GetTickCount64() - m_lastNewFrameTick < m_frameTimeoutMs) break;
 				char DisplayString[] = "FaceSwap Studio has stopped sending image data", *DisplayStrings[] = { DisplayString };
 				int DisplayStringLens[] = { sizeof(DisplayString) - 1 };
 				FillErrorPattern(ErrorDrawModes[EDC_UnitySendingStopped], &State, 1, DisplayStrings, DisplayStringLens, m_llFrame);
@@ -531,8 +534,8 @@ private:
 
 	static void ProcessImage(int InWidth, int InHeight, int InStride, SharedImageMemory::EFormat Format, SharedImageMemory::EResizeMode ResizeMode, SharedImageMemory::EMirrorMode MirrorMode, int Timeout, uint8_t* InBuf, ProcessState* State)
 	{
-		//Set maximum number of missed frames allowed until we show sending as having stopped
-		State->Owner->m_llFrameMissMax = (Timeout + SharedImageMemory::RECEIVE_MAX_WAIT - 1) / SharedImageMemory::RECEIVE_MAX_WAIT;
+		// The wire value is milliseconds, independent of receiver frame rate.
+		State->Owner->m_frameTimeoutMs = (Timeout > 0 ? (DWORD)Timeout : 0);
 
 		const bool NeedResize = (InWidth != State->BufWidth || InHeight != State->BufHeight);
 		if (NeedResize && ResizeMode == SharedImageMemory::RESIZEMODE_DISABLED)
@@ -882,13 +885,16 @@ private:
 	HRESULT OnThreadStartPlay() override
 	{
 		DebugLog("[OnThreadStartPlay] OnThreadStartPlay\n");
-		m_llFrame = m_llFrameMissCount = 0;
-		m_llFrameMissMax = 5;
+		m_llFrame = 0;
+		m_lastNewFrameTick = 0;
+		m_frameTimeoutMs = 1000;
 		return CSourceStream::OnThreadStartPlay();
 	}
 
 	CMediaType m_mt;
-	LONGLONG m_llFrame, m_llFrameMissCount, m_llFrameMissMax;
+	LONGLONG m_llFrame;
+	ULONGLONG m_lastNewFrameTick;
+	DWORD m_frameTimeoutMs;
 	REFERENCE_TIME m_prevStartTime;
 	REFERENCE_TIME m_avgTimePerFrame;
 	SharedImageMemory* m_pReceiver;

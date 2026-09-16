@@ -1,12 +1,13 @@
 from __future__ import annotations
 
+import ctypes
 import time
 
 import numpy as np
 import pytest
 
 from face_swap_studio.engines.base import EngineFrame
-from face_swap_studio.outputs.unity_camera import encode_rgba
+from face_swap_studio.outputs.unity_camera import UnityCamera, encode_rgba
 from face_swap_studio.outputs.virtual_camera import OutputStatus, VirtualCameraOutput
 
 
@@ -114,8 +115,8 @@ def test_invalid_frame_dimensions_pause_and_bgr_channels_are_preserved():
         output.stop()
         wait_for(lambda: receiver.closed)
     np.testing.assert_array_equal(
-        encode_rgba(np.array([[[3, 2, 1], [6, 5, 4]]], dtype=np.uint8)),
-        np.array([[[1, 2, 3, 255], [4, 5, 6, 255]]], dtype=np.uint8),
+        encode_rgba(np.array([[[3, 2, 1]], [[6, 5, 4]]], dtype=np.uint8)),
+        np.array([[[4, 5, 6, 255]], [[1, 2, 3, 255]]], dtype=np.uint8),
     )
 
 
@@ -125,3 +126,40 @@ def test_invalid_fps_does_not_launch_a_worker(fps):
     with pytest.raises(ValueError):
         output.start(32, 24, fps)
     assert output.status() == OutputStatus.STOPPED
+
+
+def test_receiver_connected_requires_live_request_events(monkeypatch):
+    """A mapped buffer alone must not look like an active receiving call."""
+    from face_swap_studio.outputs import unity_camera
+
+    now = [5.0]
+    monkeypatch.setattr(unity_camera.time, "monotonic", lambda: now[0])
+    buffer = ctypes.create_string_buffer(32 + 2 * 4)
+    ctypes.c_uint32.from_buffer(buffer).value = 8
+
+    class API:
+        requesting = True
+
+        def WaitForSingleObject(self, handle, timeout):
+            return 0 if handle == "mutex" or self.requesting else 258
+
+        def ReleaseMutex(self, handle):
+            return True
+
+        def SetEvent(self, handle):
+            return True
+
+    camera = UnityCamera.__new__(UnityCamera)
+    camera.width, camera.height = 1, 2
+    camera._handles = {name: name for name in ("mutex", "want", "sent")}
+    camera._view = ctypes.addressof(buffer)
+    camera._receiver_seen_at = None
+    camera._api = API()
+    pixels = np.array([[[3, 2, 1]], [[6, 5, 4]]], np.uint8)
+    assert camera.send(pixels)
+    assert bytes(buffer)[32:40] == bytes([4, 5, 6, 255, 1, 2, 3, 255])
+    camera._api.requesting = False
+    now[0] += 0.8
+    assert not camera.send(pixels)
+    camera._api.requesting = True
+    assert camera.send(pixels)

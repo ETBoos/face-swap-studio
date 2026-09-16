@@ -18,7 +18,7 @@ import cv2
 import numpy as np
 import pytest
 
-from face_swap_studio.engines.base import EngineConfig, EngineStatus
+from face_swap_studio.engines.base import EngineConfig, EngineFrame, EngineStatus
 from face_swap_studio.engines.facefusion import (
     FaceFusionEngine,
     read_facefusion_version,
@@ -98,7 +98,11 @@ def get_many_faces(frames):
     return [object()]
 def average_face_identity(faces): return faces[0] if faces else None
 ''')
-    put("facefusion/vision.py", "import cv2\ndef read_static_images(paths): return [cv2.imread(p) for p in paths]\n")
+    put("facefusion/vision.py", '''
+import cv2, numpy as np
+def read_static_images(paths):
+    return [cv2.imdecode(np.fromfile(p, dtype=np.uint8), cv2.IMREAD_COLOR) for p in paths]
+''')
     for name in ("facefusion/processors/__init__.py", "facefusion/processors/modules/__init__.py",
                  "facefusion/processors/modules/face_swapper/__init__.py"):
         put(name, "")
@@ -121,7 +125,9 @@ def swap_face(source, target, source_image, frame):
     checksum = zlib.crc32((root / "model.onnx").read_bytes())
     (root / "model.hash").write_text(f"{checksum:08x}")
     source = root / "source.png"
-    assert cv2.imwrite(str(source), np.full((32, 32, 3), 200, dtype=np.uint8))
+    ok, encoded = cv2.imencode(".png", np.full((32, 32, 3), 200, dtype=np.uint8))
+    assert ok
+    source.write_bytes(encoded.tobytes())
     cfg = EngineConfig(width=160, height=120, gpu_device="cpu", source_face_paths=[str(source)],
                        extra={"facefusion_root": str(root), "facefusion_python": sys.executable,
                               "facefusion_execution_provider": "cpu"})
@@ -391,3 +397,31 @@ def test_launch_env_does_not_leak_frozen_bundle_paths(install, monkeypatch):
     assert "PYTHONPATH" not in env
     assert "QT_PLUGIN_PATH" not in env
     assert env["LD_LIBRARY_PATH"] == "/system-libs"
+
+
+def test_stale_result_becomes_ineligible_placeholder(engine):
+    engine._latest = EngineFrame(
+        image=np.full((2, 2, 3), 140, dtype=np.uint8),
+        meta={"safe_to_output": True, "face_swapped": True, "stub": False,
+              "captured_monotonic_ns": time.monotonic_ns() - 3_000_000_000},
+    )
+    result = engine.read_frame()
+    assert result.meta["safe_to_output"] is False
+    assert result.meta["reason"] == "stale_frame"
+    assert np.all(result.image == 24)
+    assert engine.read_frame() is None
+
+
+def test_future_timestamp_cannot_bypass_freshness_check(engine):
+    engine._ready = True
+    now = time.monotonic_ns()
+    header = {
+        "type": "frame", "width": 1, "height": 1, "fps": 30,
+        "meta": {"frame_id": 1, "engine_version": "3.9.0", "face_swapped": True,
+                 "safe_to_output": True, "captured_at_ns": time.time_ns(),
+                 "processed_at_ns": time.time_ns(), "captured_monotonic_ns": now,
+                 "processed_monotonic_ns": now + 60_000_000_000},
+    }
+    with pytest.raises(ProtocolError, match="future"):
+        engine._accept_message(engine._generation, header, b"123")
+    assert engine.read_frame() is None

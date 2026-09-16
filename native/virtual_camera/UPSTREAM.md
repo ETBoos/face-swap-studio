@@ -15,3 +15,5 @@ This DirectShow component is experimental until actual receiving-app compatibili
 Registration is owned by the separate machine-level installer, not app startup.
 
 Product defaults: missing, stopped or resolution-mismatched frames render black instead of colored patterns; user-visible sender labels identify FaceSwap Studio. Original copyright notices and internal upstream symbol names remain intact.
+
+Lifecycle fixes: unmap the shared-memory view before closing mapping handles; measure sender inactivity using GetTickCount64 and the advertised millisecond timeout, rather than estimating elapsed time from missed-frame counts.

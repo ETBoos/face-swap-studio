@@ -28,12 +28,21 @@ def main():
     sender = UnityCamera(width=640, height=480, fps=30)
     stop = threading.Event()
     errors = []
-    pixels = np.full((480, 640, 3), (17, 80, 210), np.uint8)
+    pixels = np.empty((480, 640, 3), np.uint8)
+    colours = [(17, 80, 210), (140, 40, 30), (30, 180, 60), (210, 160, 40)]
+    pixels[:240, :320] = colours[0]
+    pixels[:240, 320:] = colours[1]
+    pixels[240:, :320] = colours[2]
+    pixels[240:, 320:] = colours[3]
 
     def publish():
         try:
+            index = 0
             while not stop.is_set():
+                stamp = (32, 96, 160, 224)[(index // 3) % 4]
+                pixels[160:320, 240:400] = stamp
                 sender.send(pixels)
+                index += 1
                 stop.wait(1 / 30)
         except Exception as exc:  # noqa: BLE001 — propagate worker errors to main
             errors.append(exc)
@@ -48,18 +57,38 @@ def main():
         capture.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
         end = time.monotonic() + 15
         count = 0
+        seen_stamps = set()
         while time.monotonic() < end:
             if errors:
                 raise errors[0]
             ok, frame = capture.read()
             if ok and frame is not None:
-                centre = frame[frame.shape[0] // 2, frame.shape[1] // 2]
-                if np.allclose(centre, (17, 80, 210), atol=4):
+                if frame.shape != (480, 640, 3):
+                    raise RuntimeError(f"Unexpected capture dimensions: {frame.shape}; expected 480x640x3")
+                height, width = frame.shape[:2]
+                corners = [frame[height // 6, width // 6], frame[height // 6, 5 * width // 6],
+                           frame[5 * height // 6, width // 6], frame[5 * height // 6, 5 * width // 6]]
+                if np.allclose(corners, colours, atol=4):
+                    centre = frame[height // 2, width // 2]
+                    for stamp in (32, 96, 160, 224):
+                        if np.allclose(centre, stamp, atol=4):
+                            seen_stamps.add(stamp)
                     count += 1
-                    if count >= 5:
-                        print("PASS: five generated BGR frames traversed IPC -> DirectShow -> OpenCV", flush=True)
-                        return
-        raise RuntimeError("No correct synthetic pixels received through the virtual camera.")
+                    if count >= 5 and len(seen_stamps) >= 3:
+                        print("PASS: BGR colours, orientation and changing frames traversed IPC -> DirectShow -> OpenCV", flush=True)
+                        break
+        else:
+            raise RuntimeError("Correct orientation, colours or changing pixels were not received.")
+        stop.set()
+        worker.join(timeout=2)
+        sender.close()
+        deadline = time.monotonic() + 2.5
+        while time.monotonic() < deadline:
+            ok, frame = capture.read()
+            if ok and frame is not None and np.max(frame) <= 3:
+                print("PASS: stopping publisher produced a black frame within 2.5 seconds", flush=True)
+                return
+        raise RuntimeError("Camera kept an old frame after the publisher stopped.")
     finally:
         stop.set()
         worker.join(timeout=2)

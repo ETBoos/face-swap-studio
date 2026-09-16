@@ -25,6 +25,7 @@ from .facefusion_protocol import MAX_CONFIG_BYTES, ProtocolError, read_message
 SUPPORTED_VERSION = "3.9.0"
 SUPPORTED_MODELS = ("inswapper_128", "inswapper_128_fp16")
 SUPPORTED_PROVIDERS = ("cuda", "cpu", "directml", "coreml")
+MAX_OUTPUT_AGE_NS = 2_000_000_000
 
 
 def resolve_facefusion_root(explicit: str | Path | None = None) -> Path | None:
@@ -288,9 +289,15 @@ class FaceFusionEngine(FaceSwapEngine):
                 raise ProtocolError("Worker emitted an invalid or out-of-order frame ID")
             if meta.get("engine_version") != SUPPORTED_VERSION:
                 raise ProtocolError("Frame engine version mismatch")
-            for key in ("captured_at_ns", "captured_monotonic_ns", "processed_at_ns"):
+            for key in ("captured_at_ns", "captured_monotonic_ns", "processed_at_ns",
+                        "processed_monotonic_ns"):
                 if type(meta.get(key)) is not int or meta[key] <= 0:
                     raise ProtocolError("Worker omitted frame timing")
+            if not (
+                meta["captured_monotonic_ns"] <= meta["processed_monotonic_ns"]
+                <= time.monotonic_ns()
+            ):
+                raise ProtocolError("Worker returned future or reversed monotonic frame timing")
             swapped = meta.get("face_swapped") is True and meta.get("safe_to_output") is True
             if not swapped and meta.get("placeholder") is not True:
                 raise ProtocolError("Worker returned an unsafe camera passthrough frame")
@@ -333,7 +340,17 @@ class FaceFusionEngine(FaceSwapEngine):
     def read_frame(self) -> EngineFrame | None:
         with self._lock:
             frame, self._latest = self._latest, None
-            return frame
+        if frame is not None and frame.meta.get("safe_to_output") is True:
+            age = time.monotonic_ns() - frame.meta["captured_monotonic_ns"]
+            if age > MAX_OUTPUT_AGE_NS or age < 0:
+                # A stalled worker/UI must never revive an old eligible frame.
+                # This is a generous stale-frame cutoff, not a latency promise.
+                frame = EngineFrame(
+                    image=np.full_like(frame.image, 24), fps=frame.fps,
+                    meta={**frame.meta, "face_swapped": False, "safe_to_output": False,
+                          "placeholder": True, "reason": "stale_frame"},
+                )
+        return frame
 
     def last_error(self) -> str | None:
         with self._lock:

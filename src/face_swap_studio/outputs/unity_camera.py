@@ -9,6 +9,7 @@ from __future__ import annotations
 import ctypes
 import struct
 import sys
+import time
 
 import numpy as np
 
@@ -19,9 +20,9 @@ HEADER_SIZE = 32
 
 
 def encode_rgba(image: np.ndarray) -> np.ndarray:
-    """The filter accepts RGBA, while the application engine contract is BGR."""
+    """Convert top-down BGR to the filter's bottom-up RGBA DIB row order."""
     rgba = np.empty((*image.shape[:2], 4), dtype=np.uint8)
-    rgba[:, :, :3] = image[:, :, ::-1]
+    rgba[:, :, :3] = image[::-1, :, ::-1]
     rgba[:, :, 3] = 255
     return rgba
 
@@ -52,6 +53,7 @@ class UnityCamera:
         self.width, self.height, self.fps = width, height, fps
         self._handles: dict[str, int] = {}
         self._view = None
+        self._receiver_seen_at: float | None = None
         self._api = ctypes.WinDLL("kernel32", use_last_error=True)
         self._configure_api()
         # Only one app instance may publish to this named camera.
@@ -134,8 +136,12 @@ class UnityCamera:
         finally:
             self._api.ReleaseMutex(self._handles["mutex"])
         self._api.SetEvent(self._handles["sent"])
-        self._api.WaitForSingleObject(self._handles["want"], 0)
-        return True
+        if self._api.WaitForSingleObject(self._handles["want"], 0) == 0:
+            self._receiver_seen_at = time.monotonic()
+        return (
+            self._receiver_seen_at is not None
+            and time.monotonic() - self._receiver_seen_at < 0.75
+        )
 
     def close(self):
         if self._view:
@@ -144,3 +150,4 @@ class UnityCamera:
         for handle in self._handles.values():
             self._api.CloseHandle(handle)
         self._handles.clear()
+        self._receiver_seen_at = None
