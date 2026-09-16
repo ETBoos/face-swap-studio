@@ -1,4 +1,4 @@
-"""Settings dialog — resolution, GPU device note, engine selection."""
+"""Advanced configuration; work mode is selected only on the main screen."""
 
 from __future__ import annotations
 
@@ -6,15 +6,31 @@ from PySide6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QFileDialog,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
     QSpinBox,
     QVBoxLayout,
+    QWidget,
 )
 
-# Keys the dialog accepts; callers may pass a larger settings dict.
-DIALOG_KEYS = ("width", "height", "camera_index", "gpu_device", "engine")
+DIALOG_KEYS = (
+    "work_mode",
+    "width",
+    "height",
+    "camera_index",
+    "gpu_device",
+    "facefusion_root",
+    "facefusion_python",
+    "deepfacelive_root",
+    "userdata_dir",
+    "facefusion_model",
+    "facefusion_execution_provider",
+    "facefusion_startup_timeout",
+)
 
 
 class SettingsDialog(QDialog):
@@ -22,69 +38,105 @@ class SettingsDialog(QDialog):
         self,
         parent=None,
         *,
-        width: int = 1280,
-        height: int = 720,
-        camera_index: int = 0,
-        gpu_device: str = "cuda:0",
-        engine: str = "placeholder",
+        work_mode="simple",
+        width=1280,
+        height=720,
+        camera_index=0,
+        gpu_device="cuda:0",
+        facefusion_root="",
+        facefusion_python="",
+        deepfacelive_root="",
+        userdata_dir="",
+        facefusion_model="inswapper_128",
+        facefusion_execution_provider="cuda",
+        facefusion_startup_timeout=90,
         **_ignored,
-    ) -> None:
+    ):
         super().__init__(parent)
-        self.setWindowTitle("设置")
-        self.setMinimumWidth(420)
-
-        form = QFormLayout()
-
-        self.width_spin = QSpinBox()
-        self.width_spin.setRange(320, 3840)
-        self.width_spin.setValue(int(width))
-        form.addRow("预览宽度", self.width_spin)
-
-        self.height_spin = QSpinBox()
-        self.height_spin.setRange(240, 2160)
-        self.height_spin.setValue(int(height))
-        form.addRow("预览高度", self.height_spin)
-
-        self.camera_spin = QSpinBox()
-        self.camera_spin.setRange(0, 16)
-        self.camera_spin.setValue(int(camera_index))
-        form.addRow("摄像头索引", self.camera_spin)
-
-        self.gpu_edit = QLineEdit(str(gpu_device))
-        form.addRow("GPU 设备", self.gpu_edit)
-
-        gpu_note = QLabel(
-            "说明：GPU 设备字符串将在接入 DeepFaceLive 后传给 CUDA 后端。\n"
-            "推荐硬件：NVIDIA RTX 4080 / 4090（Windows + 最新 Studio 驱动）。\n"
-            "当前占位引擎不使用 GPU。"
+        self.setWindowTitle("画面与引擎设置")
+        self.setMinimumWidth(590)
+        layout = QVBoxLayout(self)
+        note = QLabel(
+            "模式请在主界面选择。安装目录为可选项；已配置环境时可留空。\n"
+            "模型权重需自行准备并确认使用许可，本程序不会自动下载。"
         )
-        gpu_note.setWordWrap(True)
-        form.addRow("", gpu_note)
-
-        self.engine_combo = QComboBox()
-        self.engine_combo.addItem("占位引擎 (Placeholder)", "placeholder")
-        self.engine_combo.addItem("DeepFaceLive (未接入 / stub)", "deepfacelive")
-        self.engine_combo.addItem("FaceFusion (简易)", "facefusion")
-        idx = self.engine_combo.findData(engine)
-        if idx >= 0:
-            self.engine_combo.setCurrentIndex(idx)
-        form.addRow("引擎", self.engine_combo)
-
+        note.setWordWrap(True)
+        layout.addWidget(note)
+        form = QFormLayout()
+        layout.addLayout(form)
+        self.width_spin = self._spin(320, 1920 if work_mode == "simple" else 3840, width)
+        self.height_spin = self._spin(240, 1080 if work_mode == "simple" else 2160, height)
+        resolution = QHBoxLayout()
+        resolution.addWidget(self.width_spin)
+        resolution.addWidget(QLabel("×"))
+        resolution.addWidget(self.height_spin)
+        form.addRow("预览尺寸", resolution)
+        self.camera_spin = self._spin(0, 32, camera_index)
+        form.addRow("设备号（名称不匹配时调整）", self.camera_spin)
+        self.gpu_edit = QLineEdit(str(gpu_device))
+        form.addRow("GPU 设备（高级）", self.gpu_edit)
+        self.ff_root = self._path_field(form, "FaceFusion 安装目录", facefusion_root)
+        self.ff_python = self._path_field(form, "FaceFusion Python", facefusion_python, file=True)
+        self.dfl_root = self._path_field(form, "DeepFaceLive 安装目录", deepfacelive_root)
+        self.userdata = self._path_field(form, "DeepFaceLive 用户目录", userdata_dir)
+        self.model_edit = QLineEdit(facefusion_model)
+        form.addRow("已准备的照片模型", self.model_edit)
+        self.provider_combo = QComboBox()
+        for label, value in (("NVIDIA GPU（CUDA）", "cuda"), ("CPU（速度有限）", "cpu")):
+            self.provider_combo.addItem(label, value)
+        index = self.provider_combo.findData(facefusion_execution_provider)
+        self.provider_combo.setCurrentIndex(max(0, index))
+        form.addRow("照片模型计算设备", self.provider_combo)
+        self.timeout_spin = self._spin(10, 600, facefusion_startup_timeout)
+        self.timeout_spin.setSuffix(" 秒")
+        form.addRow("首帧等待上限", self.timeout_spin)
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-
-        layout = QVBoxLayout(self)
-        layout.addLayout(form)
         layout.addWidget(buttons)
 
-    def values(self) -> dict:
+    @staticmethod
+    def _spin(low, high, value):
+        spin = QSpinBox()
+        spin.setRange(low, high)
+        spin.setValue(int(value))
+        return spin
+
+    def _path_field(self, form, label, value, file=False):
+        line = QLineEdit(value)
+        line.setPlaceholderText("可留空")
+        row = QWidget()
+        hbox = QHBoxLayout(row)
+        hbox.setContentsMargins(0, 0, 0, 0)
+        hbox.addWidget(line)
+        browse = QPushButton("选择…")
+        hbox.addWidget(browse)
+
+        def choose():
+            if file:
+                path, _ = QFileDialog.getOpenFileName(self, label, line.text())
+            else:
+                path = QFileDialog.getExistingDirectory(self, label, line.text())
+            if path:
+                line.setText(path)
+
+        browse.clicked.connect(choose)
+        form.addRow(label, row)
+        return line
+
+    def values(self):
         return {
             "width": self.width_spin.value(),
             "height": self.height_spin.value(),
             "camera_index": self.camera_spin.value(),
             "gpu_device": self.gpu_edit.text().strip() or "cuda:0",
-            "engine": self.engine_combo.currentData(),
+            "facefusion_root": self.ff_root.text().strip(),
+            "facefusion_python": self.ff_python.text().strip(),
+            "deepfacelive_root": self.dfl_root.text().strip(),
+            "userdata_dir": self.userdata.text().strip(),
+            "facefusion_model": self.model_edit.text().strip() or "inswapper_128",
+            "facefusion_execution_provider": self.provider_combo.currentData(),
+            "facefusion_startup_timeout": self.timeout_spin.value(),
         }

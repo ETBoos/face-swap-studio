@@ -1,12 +1,12 @@
 [project]
 name = "face-swap-studio"
-version = "0.1.0"
-description = "剧组换脸预览工作站 — FaceSwap Studio (product shell + engine adapter stubs)"
+version = "0.2.0a1"
+description = "FaceSwap Studio — local real-time face swap for video calls and streaming"
 readme = "README.md"
 requires-python = ">=3.11"
-license = { text = "Proprietary — commercial film-crew license" }
+license = { text = "Proprietary" }
 authors = [{ name = "FaceSwap Studio" }]
-keywords = ["film", "face-swap", "preview", "crew", "deepfacelive"]
+keywords = ["face-swap", "realtime", "streaming", "video-calls"]
 dependencies = [
     "PySide6>=6.6.0",
     "numpy>=1.26.0",
@@ -17,6 +17,9 @@ dependencies = [
 dev = [
     "pytest>=8.0.0",
     "ruff>=0.4.0",
+]
+build = [
+    "pyinstaller==6.22.3",
 ]
 
 [project.scripts]

@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping, Optional
+from collections.abc import Mapping
+from typing import Any
 
 from face_swap_studio.engines.base import EngineConfig
 
@@ -15,14 +16,19 @@ EXTRA_SETTING_KEYS = (
     "require_nvidia",
     "allow_unknown_build",
     "no_cuda",
+    "facefusion_root",
+    "facefusion_python",
+    "facefusion_model",
+    "facefusion_execution_provider",
+    "facefusion_startup_timeout",
 )
 
 
 def build_engine_config(
     settings: Mapping[str, Any],
     *,
-    source_face_paths: Optional[list[str]] = None,
-    watermark_text: Optional[str] = "FaceSwap Studio · 授权预览",
+    source_face_paths: list[str] | None = None,
+    watermark_text: str | None = "FaceSwap Studio · 授权预览",
 ) -> EngineConfig:
     """Map UI/settings dict → EngineConfig, keeping PRO fields in ``extra``."""
     extra: dict[str, Any] = {}
@@ -38,7 +44,10 @@ def build_engine_config(
         width=int(settings.get("width", 1280)),
         height=int(settings.get("height", 720)),
         gpu_device=str(settings.get("gpu_device", "cuda:0")),
-        source_face_paths=list(source_face_paths or settings.get("source_face_paths") or []),
+        source_face_paths=list(
+            (settings.get("source_face_paths") or [])
+            if source_face_paths is None else source_face_paths
+        ),
         watermark_text=watermark_text,
         extra=extra,
     )

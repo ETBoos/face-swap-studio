@@ -30,3 +30,18 @@ def test_nested_extra_merged():
     )
     assert cfg.extra["dfm_path"] == "/tmp/b.dfm"
     assert cfg.extra["no_cuda"] is True
+
+
+def test_photo_engine_configuration_survives_and_cleared_photos_stay_empty():
+    settings = {
+        "facefusion_root": "/engine",
+        "facefusion_python": "/engine/env/python",
+        "facefusion_model": "inswapper_128_fp16",
+        "facefusion_execution_provider": "cuda",
+        "facefusion_startup_timeout": 180,
+        "source_face_paths": ["old.png"],
+    }
+    cfg = build_engine_config(settings, source_face_paths=[])
+    assert cfg.extra == {key: value for key, value in settings.items() if key.startswith("facefusion_")}
+    assert cfg.source_face_paths == []
+    assert build_engine_config(settings).source_face_paths == ["old.png"]

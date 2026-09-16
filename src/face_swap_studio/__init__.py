@@ -1,3 +1,3 @@
-"""FaceSwap Studio — 剧组换脸预览工作站 (product shell)."""
+"""FaceSwap Studio — 实时换脸与视频输出。"""
 
-__version__ = "0.1.0"
+__version__ = "0.2.0a1"

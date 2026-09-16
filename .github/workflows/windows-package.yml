@@ -1,0 +1,82 @@
+name: Windows package
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, master, "codex/**"]
+    paths-ignore: ["**.md"]
+  pull_request:
+    paths-ignore: ["**.md"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-package-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: windows-2022
+    timeout-minutes: 35
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      QT_QPA_PLATFORM: offscreen
+      PYTHONUTF8: "1"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.11"
+          architecture: x64
+      - uses: astral-sh/setup-uv@bec219d24cd3e171d82865faccec33120bb574f4 # v10.1.0
+        with:
+          version: "0.10.12"
+          enable-cache: true
+      - name: Install locked application and build dependencies
+        run: |
+          uv sync --frozen --python 3.11 --extra dev --extra build
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Install verified Inno Setup compiler
+        run: |
+          $CompilerInstaller = Join-Path $env:RUNNER_TEMP "innosetup-7.1.0-x64.exe"
+          Invoke-WebRequest "https://github.com/jrsoftware/issrc/releases/download/is-7_1_0/innosetup-7.1.0-x64.exe" -OutFile $CompilerInstaller
+          $ExpectedHash = "0362a383ed217d4c4239b5933866dd96d3eb2102737da92f80f6057a4b40df2f"
+          if ((Get-FileHash $CompilerInstaller -Algorithm SHA256).Hash.ToLowerInvariant() -ne $ExpectedHash) {
+            throw "Inno Setup compiler download failed SHA256 verification."
+          }
+          $CompilerDir = Join-Path $env:RUNNER_TEMP "InnoSetup"
+          $Process = Start-Process $CompilerInstaller -ArgumentList @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-", "/DIR=`"$CompilerDir`"") -Wait -PassThru
+          if ($Process.ExitCode -ne 0) { throw "Inno Setup installation failed: $($Process.ExitCode)" }
+          "FSS_ISCC=$CompilerDir\ISCC.exe" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+      - name: Test and build installer and portable archive
+        run: ./scripts/build-windows.ps1 -InnoSetupCompiler $env:FSS_ISCC
+      - name: Verify installed app and uninstall
+        run: |
+          $Installer = Get-ChildItem "dist/artifacts/FaceSwapStudio-*-windows-x64-setup.exe" | Select-Object -First 1
+          ./scripts/test-windows-installer.ps1 -Installer $Installer.FullName
+      - name: Verify optional camera registration and uninstall
+        run: ./scripts/test-windows-camera-installer.ps1 -Installer "dist/artifacts/FaceSwapStudio-Camera-Setup.exe" -FrameTestScript "scripts/smoke_virtual_camera.py"
+      - name: Upload Windows preview packages
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: FaceSwapStudio-windows-x64-${{ github.run_number }}
+          path: dist/artifacts/*
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 14
+      - name: Upload test and packaging diagnostics
+        if: always()
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: FaceSwapStudio-windows-diagnostics-${{ github.run_number }}
+          path: |
+            build/reports/
+            build/pyinstaller/face-swap-studio/warn-*.txt
+            build/packaging/build-info.json
+          if-no-files-found: warn
+          retention-days: 14

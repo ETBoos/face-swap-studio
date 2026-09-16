@@ -7,10 +7,11 @@ stable API so the GUI and project layer stay engine-agnostic.
 
 from __future__ import annotations
 
+import logging
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 import numpy as np
 
@@ -18,6 +19,7 @@ import numpy as np
 class EngineStatus(str, Enum):
     UNAVAILABLE = "unavailable"
     READY = "ready"
+    STARTING = "starting"
     RUNNING = "running"
     ERROR = "error"
     STUB = "stub"
@@ -31,6 +33,7 @@ class EngineCapabilities:
     supports_gpu: bool
     notes: str = ""
     is_stub: bool = True
+    preview_mode: str = "internal"
 
 
 @dataclass
@@ -51,7 +54,7 @@ class EngineConfig:
     height: int = 720
     gpu_device: str = "cuda:0"
     source_face_paths: list[str] = field(default_factory=list)
-    watermark_text: Optional[str] = "FaceSwap Studio · 授权预览"
+    watermark_text: str | None = "FaceSwap Studio · 授权预览"
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -80,7 +83,7 @@ class FaceSwapEngine(ABC):
         ...
 
     @abstractmethod
-    def read_frame(self) -> Optional[EngineFrame]:
+    def read_frame(self) -> EngineFrame | None:
         """Return next preview frame, or None if not running / no frame."""
         ...
 
@@ -93,4 +96,4 @@ class FaceSwapEngine(ABC):
         try:
             self.stop()
         except Exception:
-            pass
+            logging.getLogger(__name__).debug("Engine shutdown failed", exc_info=True)

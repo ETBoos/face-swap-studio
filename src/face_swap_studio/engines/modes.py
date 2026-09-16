@@ -9,12 +9,12 @@ class WorkMode(str, Enum):
     """User-facing mode switch."""
 
     SIMPLE = "simple"  # FaceFusion — easy config, no .dfm
-    PRO = "pro"  # DeepFaceLive — load .dfm for top realism
+    PRO = "pro"  # DeepFaceLive — separately trained .dfm model
 
 
 MODE_LABELS_ZH = {
-    WorkMode.SIMPLE: "简易模式（FaceFusion · 无需 dfm）",
-    WorkMode.PRO: "顶级模式（DeepFaceLive · 加载 .dfm）",
+    WorkMode.SIMPLE: "照片模式（FaceFusion）",
+    WorkMode.PRO: "专属模型（DeepFaceLive · .dfm）",
 }
 
 MODE_ENGINE_IDS = {
