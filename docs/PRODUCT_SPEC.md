@@ -20,13 +20,13 @@
 
 | 级别 | 平台 | 路径 |
 |------|------|------|
-| **正式支持** | WhatsApp Desktop（Win） | 换脸画面 → OBS → **Media Foundation 虚拟摄像头** → WhatsApp 选摄像头 |
+| **目标正式支持**（待 `REALTIME_ACCEPTANCE.md` + `COMPAT_MATRIX.md` 真机证据） | WhatsApp Desktop（Win） | 换脸画面 → OBS → **Media Foundation 虚拟摄像头** → WhatsApp 选摄像头；无证据前禁止写「已正式支持」 |
 | **实验支持（未测通禁止写已支持）** | 微信 PC / 微信海外 PC | 同上；兼容性取决于腾讯客户端版本；**真机选中虚拟摄像头测试通过前不得对外称已支持** |
 | **不做** | 手机微信 / 手机 WhatsApp | 系统不开放第三方虚拟摄像头 |
 
 对外话术：「桌面视频通话：WhatsApp 优先，微信实验」。禁止写「支持微信 WhatsApp」全称通吃。
 
-**档位**：虚拟摄像头输出仅 **Pro / Studio**；Starter 仅预览窗。虚拟摄像头为主路径关键卡点；与 P0 样片同场真机测试。
+**档位**：虚拟摄像头输出仅 **Pro / Studio**；Starter 仅预览窗。虚拟摄像头（L1→L3）= 主场景出站路径，与换脸引擎同属 P0 主链路。
 
 ## 对外话术（产品定稿）
 
@@ -34,7 +34,7 @@
 
 **禁止表述**：「支持全部社交媒体」「原生对接所有 App」。
 
-说明：换脸输出本质是虚拟摄像头/OBS 推流，对方软件把它当普通摄像头。Zoom / Teams / Discord / OBS→Twitch·YouTube 等可选摄像头或推流的桌面场景可覆盖；多数手机端 App 不在本期。虚拟摄像头能力标为 **P2**，真机样片之后再做。
+说明：换脸输出本质是虚拟摄像头/OBS 推流，对方软件把它当普通摄像头。Zoom / Teams / Discord / OBS→Twitch·YouTube 等可选摄像头或推流的桌面场景可覆盖；多数手机端 App 不在本期。虚拟摄像头（L1→L3）= **主场景出站路径**，与换脸引擎同属 P0 主链路。
 
 ## 1. 一句话
 
@@ -123,6 +123,15 @@
 
 壳负责模式切换；真推理分别由 FaceFusion / DeepFaceLive 适配器在 GPU 机接线。
 
+
+## 出站路径优先级（主链路，非 P2）
+
+1. L1：OBS + DroidCam Virtual Output（驱动+插件）— 见 `docs/L1_VIRTUAL_CAM.md`
+2. L2：钉版本矩阵
+3. L3：采集卡环回 — 见 `docs/L3_CAPTURE_CARD_BEGINNER.md`（扩展屏优先；一分二≠扩展桌面）
+
+验收：`docs/REALTIME_ACCEPTANCE.md`  
+引擎锁定：`docs/ENGINE_VERSION_PIN.md`
 
 ## 微信 PC 出站技术档位（L1→L2→L3）
 
