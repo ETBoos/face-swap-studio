@@ -27,6 +27,11 @@ WizardStyle=modern
 RestartApplications=no
 InfoBeforeFile=camera-readme.txt
 SetupLogging=yes
+ShowLanguageDialog=no
+LanguageDetectionMethod=none
+
+[Languages]
+Name: "chinesesimp"; MessagesFile: "compiler:Languages\ChineseSimplified.isl"
 
 [Files]
 Source: "{#NativeDir}\x64\FaceSwapStudioCamera64.dll"; DestDir: "{app}"; Flags: regserver 64bit uninsrestartdelete

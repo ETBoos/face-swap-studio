@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import threading
 import time
 from datetime import UTC, datetime
@@ -220,6 +221,9 @@ class MainWindow(QMainWindow):
         self.output_info = QLabel("等待真实换脸预览。演示画面与原摄像头画面不会输出。")
         self.output_info.setWordWrap(True)
         output_layout.addWidget(self.output_info)
+        self.btn_install_output = QPushButton("准备虚拟摄像头…")
+        self.btn_install_output.clicked.connect(self._install_output_component)
+        output_layout.addWidget(self.btn_install_output)
         self.btn_output_help = QPushButton("如何检查输出？")
         self.btn_output_help.clicked.connect(self._show_output_help)
         output_layout.addWidget(self.btn_output_help)
@@ -807,6 +811,23 @@ class MainWindow(QMainWindow):
             self.output_info.setText(
                 self.output.last_error() or "输出已暂停。确认预览后手动重新开始。"
             )
+
+    def _install_output_component(self):
+        if sys.platform != "win32":
+            self._notice("虚拟摄像头组件目前用于 Windows，请在 Windows 安装包中完成准备。")
+            return
+        if getattr(sys, "frozen", False):
+            installer = Path(sys.executable).parent / "components" / "FaceSwapStudio-Camera-Setup.exe"
+        else:
+            installer = Path(__file__).resolve().parents[3] / "dist" / "artifacts" / "FaceSwapStudio-Camera-Setup.exe"
+        if not installer.is_file():
+            self._notice("未找到摄像头安装组件。请完整安装主程序，或运行下载包中的 FaceSwapStudio-Camera-Setup.exe。")
+            return
+        self._stop_preview()
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(str(installer))):
+            self._notice("请完成弹出的组件安装，然后重新打开通话或直播软件。组件安装需要 Windows 管理员权限。")
+        else:
+            self._notice("未能打开安装组件，请从开始菜单运行「安装虚拟摄像头组件」。")
 
     def _show_output_help(self):
         QMessageBox.information(
