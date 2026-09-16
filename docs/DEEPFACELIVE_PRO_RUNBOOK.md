@@ -59,3 +59,9 @@
 
 ## 出站到微信 PC（L1→L2→L3）
 换脸引擎出画后：L1 OBS+MF 虚拟摄像头 → L2 钉版本/驱动 → L3 采集卡环回。详见 PRODUCT_SPEC。微信未测通前为实验支持。
+
+## Codex #5 注意（适配器 0.4）
+
+1. **NVIDIA 识别**：优先看 `_internal/CUDA/bin`（cudart/cublas/cudnn），目录改名 `DeepFaceLive` 不应判 unknown。
+2. **自定义 userdata**：官方 `DeepFaceLive.bat` 写死 `%~dp0userdata`；壳对自定义目录改走 `_internal/python/python.exe` + `main.py --userdata-dir`。
+3. **验收**：`docs/PRO_ENGINE_FOUR_STAGE.md` — RUNNING ≠ 模型加载 ≠ 首帧 ≠ 微信通。
