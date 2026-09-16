@@ -23,6 +23,8 @@ def main():
     print("Video inputs:", names, flush=True)
     if names != [DEVICE_NAME]:
         raise RuntimeError("Pixel smoke expects only our generated virtual camera; refusing physical devices.")
+    from probe_directshow import main as probe_graph
+    probe_graph()
     sender = UnityCamera(width=640, height=480, fps=30)
     stop = threading.Event()
     errors = []

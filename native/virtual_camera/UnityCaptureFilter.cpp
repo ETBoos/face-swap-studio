@@ -80,18 +80,20 @@ static EErrorDrawMode ErrorDrawModes[_EDC_MAX] = { EDM_BLACK, EDM_BLACK, EDM_BLA
 static wchar_t* ErrorDrawModeNames[] = { L"Green Key (RGB #00FE00)", L"Blue/Pink Pattern", L"Green/Yellow Pattern", L"Fill Black" };
 static bool OutputFrameRate = false;
 
-#ifdef _DEBUG
 void DebugLog(const char *format, ...)
 {
+#ifndef _DEBUG
+	char enabled[2];
+	if (!GetEnvironmentVariableA("FSS_CAMERA_DEBUG", enabled, sizeof(enabled))) return;
+#endif
 	char stackbuf[1024];
 	stackbuf[0] = '\0';
 	va_list ap; va_start(ap, format); vsnprintf_s(stackbuf, 1024, 1024, format, ap); va_end(ap);
 	stackbuf[1023] = '\0';
 	OutputDebugStringA(stackbuf);
+	fputs(stackbuf, stderr);
+	fflush(stderr);
 }
-#else
-#define DebugLog(...) ((void)0)
-#endif
 
 //Interface definition for ICamSource used by CCaptureSource
 DEFINE_GUID(IID_ICamSource, 0xdd20e647, 0xf3e5, 0x4156, 0xb3, 0x7b, 0x54, 0x6f, 0xcf, 0x88, 0xec, 0x50);

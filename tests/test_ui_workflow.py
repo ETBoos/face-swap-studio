@@ -387,6 +387,8 @@ def test_camera_scan_is_asynchronous_and_does_not_probe_frames(scene, monkeypatc
     until(lambda: not w._scan_running)
     assert "Test USB" in w.camera_combo.itemText(0)
     assert w.camera_combo.itemData(0) == 1  # preserve DirectShow index after filtering output
+    assert w.settings["camera_index"] == 1
+    assert w.camera_combo.count() == 1  # do not append a phantom saved output-device index
     assert not captured
 
 

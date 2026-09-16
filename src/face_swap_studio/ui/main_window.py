@@ -120,6 +120,7 @@ class MainWindow(QMainWindow):
         self._cleanup_thread = None
         self._closed = False
         self._scan_running = False
+        self._camera_scan_empty = False
         self._signals = _Signals(self)
         self._signals.started.connect(self._on_engine_started)
         self._signals.devices.connect(self._on_devices_found)
@@ -402,17 +403,25 @@ class MainWindow(QMainWindow):
             return
         self._scan_running = False
         self.btn_scan.setEnabled(True)
+        self._camera_scan_empty = not devices and not error
         if devices:
             self.camera_combo.blockSignals(True)
             self.camera_combo.clear()
             for index, name in devices:
                 self.camera_combo.addItem(f"{name} · 设备 {index + 1}", index)
+            selected = self.camera_combo.findData(self.settings["camera_index"])
+            self.camera_combo.setCurrentIndex(max(0, selected))
             self.camera_combo.blockSignals(False)
-            self._sync_camera_choice()
+            self._on_camera_changed()
             self.camera_hint.setText(
-                "设备已找到。系统设备排序可能不同，请在预览中确认；需要时到设置调整设备号。"
+                "设备已找到，请在预览中确认画面。软件自身的输出设备不会列为输入。"
             )
         else:
+            if not error:
+                self.camera_combo.blockSignals(True)
+                self.camera_combo.clear()
+                self.camera_combo.addItem("未找到输入摄像头", None)
+                self.camera_combo.blockSignals(False)
             self.camera_hint.setText(
                 "未找到可枚举设备。请连接摄像头、检查系统权限，或在设置中指定设备号。"
             )
@@ -525,6 +534,9 @@ class MainWindow(QMainWindow):
         if self._previewing:
             return
         mode = self.settings["work_mode"]
+        if self._camera_scan_empty:
+            self._notice("请先连接输入摄像头，再点击「查找设备」。虚拟输出摄像头不能作为本程序输入。")
+            return
         if mode != "demo" and not self.consent_box.isChecked():
             self._notice("请先确认照片或模型的使用许可。")
             return

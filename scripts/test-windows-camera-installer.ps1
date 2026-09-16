@@ -49,6 +49,7 @@ try {
         if ((Get-CameraServer $CameraClass) -ne $Expected) { throw "Camera registration mismatch for $($CameraClass.Id)." }
     }
     if ($FrameTestScript) {
+        $env:FSS_CAMERA_DEBUG = "1"
         $FrameScriptPath = (Resolve-Path $FrameTestScript).Path
         $FrameProcess = Start-Process -FilePath (Get-Command $PythonExe).Source -ArgumentList @("`"$FrameScriptPath`"") -WorkingDirectory $ProjectRoot -PassThru -RedirectStandardOutput "$ReportsDir\camera-frame-test.txt" -RedirectStandardError "$ReportsDir\camera-frame-test-stderr.txt"
         if (-not $FrameProcess.WaitForExit(45000)) {
