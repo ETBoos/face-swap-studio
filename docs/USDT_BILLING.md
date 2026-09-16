@@ -27,3 +27,7 @@
 ## 虚拟摄像头与档位
 
 虚拟摄像头输出（OBS → MF → WhatsApp/微信实验）仅 **Pro / Studio**；Starter 仅预览窗。详见 PRODUCT_SPEC「桌面通话兼容」。
+
+## Studio 可选硬件
+
+L3 微信保底：`HDMI 环出 + HDMI→USB UVC 采集卡（1080p60）` 为 Studio 可选件，不进软件标配价。
