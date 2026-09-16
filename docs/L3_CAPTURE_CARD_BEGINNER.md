@@ -12,6 +12,8 @@
 3. 没有：换 USB 口、重插；仍没有 → 换货
 
 ## ③ 让换脸画面进卡
+**DeepFaceLive / FaceFusion：**把 Stream output 或预览窗拖到采集卡那块屏再全屏；微信仍只选采集卡设备名。
+
 1. Windows「设置 → 系统 → 显示」里会多一块屏
 2. 把 FaceFusion / DeepFaceLive 的预览窗**拖到那块屏并全屏**（或投影只到该 HDMI）
 3. 这样卡吃到的才是换脸画面，不是桌面乱窗
