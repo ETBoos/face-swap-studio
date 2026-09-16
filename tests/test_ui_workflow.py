@@ -375,17 +375,18 @@ def test_cancel_during_initialization_never_restarts_old_session(scene):
 
 
 def test_camera_scan_is_asynchronous_and_does_not_probe_frames(scene, monkeypatch):
-    from PySide6.QtMultimedia import QMediaDevices
+    from face_swap_studio.core import cameras
 
     w = scene[0]
     captured = []
     monkeypatch.setattr(cv2, "VideoCapture", lambda *args: captured.append(args))
     monkeypatch.setattr(
-        QMediaDevices, "videoInputs", lambda: [SimpleNamespace(description=lambda: "Test USB")]
+        cameras, "camera_names", lambda: ["FaceSwap Studio Camera", "Test USB"]
     )
     w.btn_scan.click()
     until(lambda: not w._scan_running)
     assert "Test USB" in w.camera_combo.itemText(0)
+    assert w.camera_combo.itemData(0) == 1  # preserve DirectShow index after filtering output
     assert not captured
 
 

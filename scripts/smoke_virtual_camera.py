@@ -11,17 +11,15 @@ import time
 
 import cv2
 import numpy as np
-from PySide6.QtCore import QCoreApplication
-from PySide6.QtMultimedia import QMediaDevices
 
+from face_swap_studio.core.cameras import directshow_camera_names
 from face_swap_studio.outputs.unity_camera import DEVICE_NAME, UnityCamera
 
 
 def main():
     if sys.platform != "win32":
         raise RuntimeError("This smoke check requires Windows.")
-    app = QCoreApplication.instance() or QCoreApplication([])
-    names = [device.description() for device in QMediaDevices.videoInputs()]
+    names = directshow_camera_names()
     print("Video inputs:", names, flush=True)
     if names != [DEVICE_NAME]:
         raise RuntimeError("Pixel smoke expects only our generated virtual camera; refusing physical devices.")
@@ -94,7 +92,6 @@ def main():
         worker.join(timeout=2)
         capture.release()
         sender.close()
-        del app
 
 
 if __name__ == "__main__":

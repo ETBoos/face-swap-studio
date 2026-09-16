@@ -13,7 +13,7 @@ def run() -> int:
     multiprocessing.freeze_support()
     data_root = Path(
         os.environ.get("FSS_DATA_DIR")
-        or Path(os.environ.get("LOCALAPPDATA", Path.home())) / "FaceSwapStudio"
+        or Path.home() / "FaceSwapStudio"
     )
     log_dir = data_root / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -34,7 +34,7 @@ def run() -> int:
 
             ctypes.windll.user32.MessageBoxW(
                 None,
-                f"FaceSwap Studio could not start.\nDetails were saved to:\n{log_path}",
+                f"FaceSwap Studio 暂时无法启动。\n错误详情已保存到：\n{log_path}\n请将这份日志用于排查。",
                 "FaceSwap Studio",
                 0x10,
             )

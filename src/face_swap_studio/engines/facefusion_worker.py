@@ -199,7 +199,8 @@ class LatestCapture:
     def _run(self) -> None:
         camera = None
         try:
-            camera = self.cv2.VideoCapture(self.config["camera_index"])
+            backend = self.cv2.CAP_DSHOW if sys.platform == "win32" else self.cv2.CAP_ANY
+            camera = self.cv2.VideoCapture(self.config["camera_index"], backend)
             if not camera.isOpened():
                 raise RuntimeError("摄像头无法打开；请关闭占用摄像头的应用或更换摄像头编号")
             for prop, value in ((self.cv2.CAP_PROP_FRAME_WIDTH, self.config["width"]),

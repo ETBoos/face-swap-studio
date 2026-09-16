@@ -381,11 +381,12 @@ class MainWindow(QMainWindow):
         def scan():
             devices, error = [], ""
             try:
-                from PySide6.QtMultimedia import QMediaDevices
+                from face_swap_studio.core.cameras import camera_names
 
                 devices = [
-                    (i, device.description())
-                    for i, device in enumerate(QMediaDevices.videoInputs())
+                    (i, name)
+                    for i, name in enumerate(camera_names())
+                    if name != "FaceSwap Studio Camera"
                 ]
             except Exception as exc:  # noqa: BLE001 — contain backend failures at the GUI boundary
                 error = str(exc)

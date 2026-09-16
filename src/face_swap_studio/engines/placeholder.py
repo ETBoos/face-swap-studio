@@ -7,6 +7,7 @@ Does NOT perform face swap.
 from __future__ import annotations
 
 import time
+import sys
 from typing import Optional
 
 import cv2
@@ -47,7 +48,8 @@ class PlaceholderEngine(FaceSwapEngine):
 
     def initialize(self, config: EngineConfig) -> None:
         self._config = config
-        self._cap = cv2.VideoCapture(config.camera_index)
+        backend = cv2.CAP_DSHOW if sys.platform == "win32" else cv2.CAP_ANY
+        self._cap = cv2.VideoCapture(config.camera_index, backend)
         if self._cap is not None and self._cap.isOpened():
             self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, config.width)
             self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, config.height)

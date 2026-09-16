@@ -62,7 +62,7 @@ import cv2, numpy as np, time
 from pathlib import Path
 ROOT = Path(__file__).parent.parent
 class Camera:
-    def __init__(self, index):
+    def __init__(self, index, *_backend):
         self.index = index
         self.count = 0
     def isOpened(self): return self.index != 99
