@@ -13,6 +13,9 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+# Keys the dialog accepts; callers may pass a larger settings dict.
+DIALOG_KEYS = ("width", "height", "camera_index", "gpu_device", "engine")
+
 
 class SettingsDialog(QDialog):
     def __init__(
@@ -24,6 +27,7 @@ class SettingsDialog(QDialog):
         camera_index: int = 0,
         gpu_device: str = "cuda:0",
         engine: str = "placeholder",
+        **_ignored,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("设置")
@@ -33,20 +37,20 @@ class SettingsDialog(QDialog):
 
         self.width_spin = QSpinBox()
         self.width_spin.setRange(320, 3840)
-        self.width_spin.setValue(width)
+        self.width_spin.setValue(int(width))
         form.addRow("预览宽度", self.width_spin)
 
         self.height_spin = QSpinBox()
         self.height_spin.setRange(240, 2160)
-        self.height_spin.setValue(height)
+        self.height_spin.setValue(int(height))
         form.addRow("预览高度", self.height_spin)
 
         self.camera_spin = QSpinBox()
         self.camera_spin.setRange(0, 16)
-        self.camera_spin.setValue(camera_index)
+        self.camera_spin.setValue(int(camera_index))
         form.addRow("摄像头索引", self.camera_spin)
 
-        self.gpu_edit = QLineEdit(gpu_device)
+        self.gpu_edit = QLineEdit(str(gpu_device))
         form.addRow("GPU 设备", self.gpu_edit)
 
         gpu_note = QLabel(
@@ -60,6 +64,7 @@ class SettingsDialog(QDialog):
         self.engine_combo = QComboBox()
         self.engine_combo.addItem("占位引擎 (Placeholder)", "placeholder")
         self.engine_combo.addItem("DeepFaceLive (未接入 / stub)", "deepfacelive")
+        self.engine_combo.addItem("FaceFusion (简易)", "facefusion")
         idx = self.engine_combo.findData(engine)
         if idx >= 0:
             self.engine_combo.setCurrentIndex(idx)

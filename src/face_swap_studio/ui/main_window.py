@@ -30,12 +30,13 @@ from face_swap_studio import __version__
 from face_swap_studio.core.consent import BANNER_ZH, CONSENT_CHECKLIST_ZH
 from face_swap_studio.core.project import ProjectMeta, ProjectStore
 from face_swap_studio.core.usage_log import UsageLog
-from face_swap_studio.engines.base import EngineConfig
+from face_swap_studio.engines.config_builder import build_engine_config
 from face_swap_studio.engines.deepfacelive_stub import create_engine
+from face_swap_studio.engines.lifecycle import replace_engine, shutdown_engine
 from face_swap_studio.engines.modes import MODE_ENGINE_IDS, MODE_LABELS_ZH, WorkMode
 from face_swap_studio.licensing.plans import PlanTier
 from face_swap_studio.licensing.store import LicenseStore
-from face_swap_studio.ui.settings_dialog import SettingsDialog
+from face_swap_studio.ui.settings_dialog import DIALOG_KEYS, SettingsDialog
 
 
 def _default_projects_root() -> Path:
@@ -51,6 +52,9 @@ class MainWindow(QMainWindow):
         self.store = ProjectStore(projects_root or _default_projects_root())
         self.log = UsageLog(self.store.root.parent / "logs" / "usage.jsonl")
         self.license = LicenseStore(self.store.root.parent / "license.json")
+        gate_issues = self.license.enforce_startup_gate()
+        if gate_issues:
+            self.log.record("license_gate", issues=gate_issues)
         self.current: Optional[ProjectMeta] = None
         self.engine = create_engine("placeholder")
         self.settings = {
@@ -211,6 +215,10 @@ class MainWindow(QMainWindow):
             self.project_list.setCurrentItem(items[0])
 
     def _on_project_selected(self, name: str) -> None:
+        if self._previewing:
+            self._stop_preview()
+        shutdown_engine(self.engine)
+        self.engine = create_engine(self.settings.get("engine", "placeholder"))
         if not name:
             self.current = None
             self.asset_list.clear()
@@ -290,7 +298,9 @@ class MainWindow(QMainWindow):
     # --- preview ---
 
     def _open_settings(self) -> None:
-        dlg = SettingsDialog(self, **self.settings)
+        # Only pass dialog-known keys — full settings dict used to TypeError.
+        dlg_kwargs = {k: self.settings[k] for k in DIALOG_KEYS if k in self.settings}
+        dlg = SettingsDialog(self, **dlg_kwargs)
         if dlg.exec():
             self.settings.update(dlg.values())
             self.engine_info.setText(f"引擎: {self.settings['engine']}（切换后需重新开始预览）")
@@ -308,20 +318,13 @@ class MainWindow(QMainWindow):
                 return
 
         engine_name = self.settings.get("engine", "placeholder")
-        try:
-            self.engine.shutdown()
-        except Exception:
-            pass
-        self.engine = create_engine(engine_name)
+        self.engine = replace_engine(self.engine, engine_name, factory=create_engine)
 
         wm = None
         if not self.current or self.current.watermark_enabled:
             wm = "FaceSwap Studio · 授权预览"
-        cfg = EngineConfig(
-            camera_index=int(self.settings["camera_index"]),
-            width=int(self.settings["width"]),
-            height=int(self.settings["height"]),
-            gpu_device=str(self.settings["gpu_device"]),
+        cfg = build_engine_config(
+            self.settings,
             source_face_paths=self._asset_paths(),
             watermark_text=wm,
         )
@@ -437,8 +440,12 @@ class MainWindow(QMainWindow):
             )
         self.settings["work_mode"] = mode_val
         self.settings["engine"] = MODE_ENGINE_IDS[mode]
-        self.engine = create_engine(self.settings["engine"])
-        self.btn_dfm.setEnabled(mode == WorkMode.PRO)
+        if self._previewing:
+            self._stop_preview()
+        self.engine = replace_engine(
+            self.engine, self.settings["engine"], factory=create_engine
+        )
+        self.btn_dfm.setEnabled(mode == WorkMode.PRO and self.license.state.allows_pro_dfm())
         self.statusBar().showMessage(
             f"{MODE_LABELS_ZH[mode]} | 授权:{self.license.state.tier.value}"
         )
@@ -456,9 +463,6 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # noqa: N802
         self._timer.stop()
-        try:
-            self.engine.shutdown()
-        except Exception:
-            pass
+        shutdown_engine(self.engine)
         self.log.record("app_exit")
         super().closeEvent(event)
