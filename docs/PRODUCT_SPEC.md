@@ -122,3 +122,16 @@
 | 顶级 | DeepFaceLive | 导入训练好的 `.dfm` 后实时预览 |
 
 壳负责模式切换；真推理分别由 FaceFusion / DeepFaceLive 适配器在 GPU 机接线。
+
+
+## 微信 PC 出站技术档位（L1→L2→L3）
+
+引擎（FaceFusion / DeepFaceLive）不改为微信定制；只解决「出站设备被微信认成摄像头」。
+
+| 档 | 做法 | 验收 |
+|----|------|------|
+| **L1** | 换脸画面 → OBS → **Media Foundation 虚拟摄像头**（如 DroidCam Virtual Output）→ 微信 PC 选用 | 通 = **主路径转正** |
+| **L2** | 钉死微信版本 + MF 驱动名 + 分辨率/FPS 与 OBS 一致；不通换 MF 实现，不换引擎 | 矩阵记录版本组合 |
+| **L3** | 换脸窗口/全屏 → HDMI/采集卡环回 → 系统出现真实 UVC 摄像头 → 微信当普通摄像头选 | 通则产品可用，须标「需采集卡环回」，进 Studio 硬件清单 |
+
+真机顺序：L1 → 不通上 L2 → 再不通上 L3。禁止只用 OBS DirectShow VirtualCam 作为唯一方案（腾讯系经常不认）。

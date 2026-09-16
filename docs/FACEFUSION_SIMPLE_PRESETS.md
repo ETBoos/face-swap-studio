@@ -31,3 +31,6 @@
 - `work_mode=simple` → engine `facefusion`
 - `extra.facefusion_root`
 - `source_face_paths`
+
+## 出站到微信 PC（L1→L2→L3）
+换脸引擎出画后：L1 OBS+MF 虚拟摄像头 → L2 钉版本/驱动 → L3 采集卡环回。详见 PRODUCT_SPEC。微信未测通前为实验支持。
