@@ -94,7 +94,7 @@
 
 1. 本仓库源码 / 压缩包（`face-swap-studio-transfer.tar.gz`）  
 2. Windows 一键安装与启动脚本  
-3. 引擎适配接口文档（`engines/deepfacelive_stub.py`）  
+3. 引擎适配接口文档（`engines/base.py` / `engines/deepfacelive.py`）  
 4. 现场：在客户 4090 机器上完成 DFL 接入与验收（另行工时）
 
 ## 7. 路线图（简）

@@ -31,7 +31,7 @@ from face_swap_studio.core.consent import BANNER_ZH, CONSENT_CHECKLIST_ZH
 from face_swap_studio.core.project import ProjectMeta, ProjectStore
 from face_swap_studio.core.usage_log import UsageLog
 from face_swap_studio.engines.config_builder import build_engine_config
-from face_swap_studio.engines.deepfacelive_stub import create_engine
+from face_swap_studio.engines import create_engine
 from face_swap_studio.engines.lifecycle import replace_engine, shutdown_engine
 from face_swap_studio.engines.modes import MODE_ENGINE_IDS, MODE_LABELS_ZH, WorkMode
 from face_swap_studio.licensing.plans import PlanTier
@@ -337,7 +337,8 @@ class MainWindow(QMainWindow):
             QMessageBox.critical(
                 self,
                 "引擎启动失败",
-                f"{e}\n\n提示：DeepFaceLive 尚未接入，请在设置中选择「占位引擎」。",
+                f"{e}\n\n提示：顶级模式需要 NVIDIA DeepFaceLive 与 .dfm；"
+                "简易模式需要 FaceFusion。也可在设置中改回占位引擎。",
             )
             self.log.record("preview_error", error=str(e), engine=engine_name)
             return

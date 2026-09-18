@@ -35,7 +35,7 @@
 | 使用日志（JSONL） | **可用（本地桩）** |
 | PySide6 中文 GUI | **可用（壳）** |
 | 摄像头预览 | **占位**：有摄像头则显示画面+横幅，否则合成 slate |
-| DeepFaceLive 适配器 | **stub only**（见 `engines/deepfacelive_stub.py`） |
+| DeepFaceLive 适配器 | **已接线**：启动子进程打开 DFL 窗口（见 `engines/deepfacelive.py`）；壳内 `read_frame()` 仍不拉流 |
 | 真实人脸交换 | **未实现** |
 
 ---
@@ -101,7 +101,8 @@ face-swap-studio/
     engines/
       base.py              # FaceSwapEngine 适配接口
       placeholder.py       # 占位预览引擎（真实可用的壳）
-      deepfacelive_stub.py # DeepFaceLive 接入说明 + stub
+      deepfacelive.py      # DeepFaceLive Pro 适配器（启动官方 NVIDIA 包）
+      facefusion_stub.py   # FaceFusion 简易模式（仍为 stub）
     ui/                    # PySide6 中文界面
   scripts/setup-win.bat
   scripts/start-win.bat
@@ -123,7 +124,7 @@ face-swap-studio/
 
 ## DeepFaceLive 接入（概要）
 
-详见 `src/face_swap_studio/engines/deepfacelive_stub.py` 模块文档。建议：
+详见 `src/face_swap_studio/engines/deepfacelive.py` 与 `docs/PRO_DEEPFACELIVE.md`。建议：
 
 - 独立 venv/conda 安装 DFL + CUDA；
 - 通过 **子进程 / 共享内存 / 本地 socket** 与 PySide6 进程隔离；

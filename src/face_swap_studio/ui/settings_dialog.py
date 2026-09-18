@@ -63,8 +63,8 @@ class SettingsDialog(QDialog):
 
         self.engine_combo = QComboBox()
         self.engine_combo.addItem("占位引擎 (Placeholder)", "placeholder")
-        self.engine_combo.addItem("DeepFaceLive (未接入 / stub)", "deepfacelive")
-        self.engine_combo.addItem("FaceFusion (简易)", "facefusion")
+        self.engine_combo.addItem("DeepFaceLive (顶级 · .dfm)", "deepfacelive")
+        self.engine_combo.addItem("FaceFusion (简易 / stub)", "facefusion")
         idx = self.engine_combo.findData(engine)
         if idx >= 0:
             self.engine_combo.setCurrentIndex(idx)

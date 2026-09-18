@@ -35,3 +35,6 @@ def test_settings_dialog_ignores_unknown_keys(qapp):
     vals = dlg.values()
     assert vals["width"] == 1280
     assert "dfm_path" not in vals  # dialog only returns its own keys
+    engines = [dlg.engine_combo.itemData(i) for i in range(dlg.engine_combo.count())]
+    assert engines == ["placeholder", "deepfacelive", "facefusion"]
+    assert "stub" not in dlg.engine_combo.itemText(1).lower()
