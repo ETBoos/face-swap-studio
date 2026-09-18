@@ -30,8 +30,8 @@ from face_swap_studio import __version__
 from face_swap_studio.core.consent import BANNER_ZH, CONSENT_CHECKLIST_ZH
 from face_swap_studio.core.project import ProjectMeta, ProjectStore
 from face_swap_studio.core.usage_log import UsageLog
-from face_swap_studio.engines.config_builder import build_engine_config
 from face_swap_studio.engines import create_engine
+from face_swap_studio.engines.config_builder import build_engine_config
 from face_swap_studio.engines.lifecycle import replace_engine, shutdown_engine
 from face_swap_studio.engines.modes import MODE_ENGINE_IDS, MODE_LABELS_ZH, WorkMode
 from face_swap_studio.licensing.plans import PlanTier
