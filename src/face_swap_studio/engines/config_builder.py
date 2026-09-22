@@ -15,6 +15,22 @@ EXTRA_SETTING_KEYS = (
     "require_nvidia",
     "allow_unknown_build",
     "no_cuda",
+    # 即用 / Deep-Live-Cam. Empty strings are skipped by the builder.
+    "deeplivecam_root",
+    "dlc_root",
+    "deeplivecam_python",
+    "dlc_session",
+    "preview_target",
+    "target_image",
+    "execution_provider",
+    "frame_processors",
+    "execution_threads",
+    "dlc_many_faces",
+    "dlc_mouth_mask",
+    "dlc_max_memory",
+    "preview_timeout_sec",
+    "live_mirror",
+    "dlc_lang",
 )
 
 

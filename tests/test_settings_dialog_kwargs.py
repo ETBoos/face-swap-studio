@@ -35,3 +35,23 @@ def test_settings_dialog_ignores_unknown_keys(qapp):
     vals = dlg.values()
     assert vals["width"] == 1280
     assert "dfm_path" not in vals  # dialog only returns its own keys
+    assert vals["dlc_session"] == "preview"
+    assert "deeplivecam_root" in vals
+
+
+def test_main_window_defaults_to_instant_dlc(qapp, tmp_path):
+    from face_swap_studio.ui.main_window import MainWindow
+
+    window = MainWindow(projects_root=tmp_path)
+    try:
+        assert "即用" in window.mode_combo.itemText(0)
+        assert "Deep-Live-Cam" in window.mode_combo.itemText(0)
+        assert "专模" in window.mode_combo.itemText(1)
+        assert "DeepFaceLive" in window.mode_combo.itemText(1)
+        assert window.settings["work_mode"] == "simple"
+        assert window.settings["engine"] == "deeplivecam"
+        assert window.session_combo.currentData() == "preview"
+        assert window.btn_dfm.isEnabled() is False
+        assert window.btn_face.isEnabled() is True
+    finally:
+        window.close()

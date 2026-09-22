@@ -543,10 +543,12 @@ def create_engine(kind: str = "placeholder") -> FaceSwapEngine:
     kind = (kind or "placeholder").lower()
     if kind in ("deepfacelive", "dfl", "pro"):
         return DeepFaceLiveEngine()
-    if kind in ("facefusion", "ff", "simple"):
-        from face_swap_studio.engines.facefusion_stub import create_facefusion_engine
+    # 即用. "facefusion" remains a legacy alias so old settings do not
+    # resurrect the FaceFusion stub.
+    if kind in ("deeplivecam", "dlc", "simple", "facefusion", "ff"):
+        from face_swap_studio.engines.deeplivecam import DeepLiveCamEngine
 
-        return create_facefusion_engine()
+        return DeepLiveCamEngine()
     from face_swap_studio.engines.placeholder import PlaceholderEngine
 
     return PlaceholderEngine()
