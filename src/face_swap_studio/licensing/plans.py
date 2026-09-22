@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from enum import Enum
 
 
@@ -56,6 +57,12 @@ PLAN_CATALOG: dict[PlanTier, PlanSpec] = {
 EXTRA_SEAT_USDT_PER_YEAR = 79
 
 
+def _as_utc(moment: datetime) -> datetime:
+    if moment.tzinfo is None:
+        return moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc)
+
+
 @dataclass
 class LicenseState:
     tier: PlanTier = PlanTier.STARTER
@@ -65,12 +72,34 @@ class LicenseState:
     payment_address: str = ""  # display-only until merchant sets
     last_txid: str = ""
     active: bool = False  # True after mocked/on-chain confirm callback
+    # Trial codes (FS-1D / FS-30D). Empty when unactivated. USDT does not use these.
+    activation_code: str = ""
+    activated_at: str = ""  # ISO-8601 UTC
+    expires_at: str = ""  # ISO-8601 UTC; trial end, exclusive
+    used_codes: list[str] = field(default_factory=list)
+
+    def usdt_paid(self) -> bool:
+        """Formal annual unlock. Trial activation does not set this."""
+        return bool(self.active and self.last_txid and len(self.last_txid) >= 8)
+
+    def trial_current(self, *, now: datetime | None = None) -> bool:
+        if not self.expires_at:
+            return False
+        try:
+            expires = datetime.fromisoformat(self.expires_at)
+        except ValueError:
+            return False
+        current = _as_utc(now or datetime.now(timezone.utc))
+        return current < _as_utc(expires)
+
+    def allows_preview(self, *, now: datetime | None = None) -> bool:
+        """Preview/start is on for a current trial or a valid USDT license."""
+        return self.usdt_paid() or self.trial_current(now=now)
 
     def allows_pro_dfm(self) -> bool:
         spec = PLAN_CATALOG[self.tier]
         return bool(self.active and spec.allow_pro_dfm and self.dfm_enabled)
 
-    def allows_simple(self) -> bool:
+    def allows_simple(self, *, now: datetime | None = None) -> bool:
         spec = PLAN_CATALOG[self.tier]
-        return bool((not self.active) or spec.allow_simple)
-        # inactive → allow local trial of simple for demo; tighten later
+        return bool(spec.allow_simple and self.allows_preview(now=now))

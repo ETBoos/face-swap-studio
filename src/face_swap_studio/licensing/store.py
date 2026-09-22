@@ -1,12 +1,14 @@
-"""Local license JSON + USDT payment callback stub."""
+"""Local license JSON, trial activation codes, and USDT payment callback stub."""
 
 from __future__ import annotations
 
 import json
 from dataclasses import asdict
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from face_swap_studio.licensing.codes import duration_days, normalize_code
 from face_swap_studio.licensing.plans import (
     EXTRA_SEAT_USDT_PER_YEAR,
     PLAN_CATALOG,
@@ -36,6 +38,10 @@ class LicenseStore:
             payment_address=str(raw.get("payment_address", "")),
             last_txid=str(raw.get("last_txid", "")),
             active=bool(raw.get("active", False)),
+            activation_code=normalize_code(str(raw.get("activation_code", ""))),
+            activated_at=str(raw.get("activated_at", "")),
+            expires_at=str(raw.get("expires_at", "")),
+            used_codes=_load_used_codes(raw.get("used_codes")),
         )
 
     def save(self) -> None:
@@ -64,9 +70,14 @@ class LicenseStore:
         base = float(PLAN_CATALOG[tier].annual_usdt)
         return base + float(extra_seats) * float(EXTRA_SEAT_USDT_PER_YEAR)
 
-    def enforce_startup_gate(self) -> list[str]:
+    def allows_preview(self, *, now: datetime | None = None) -> bool:
+        return self.state.allows_preview(now=now)
+
+    def enforce_startup_gate(self, *, now: datetime | None = None) -> list[str]:
         """Hard-check license consistency at startup; demote unsafe state.
 
+        Expired trials return to unactivated (fields cleared, code stays used).
+        That does not change the USDT tier or `active` flag, and does not upgrade Pro.
         Returns human-readable issue codes that were repaired.
         """
         issues: list[str] = []
@@ -94,9 +105,57 @@ class LicenseStore:
                 issues.append("inactive_paid_tier_dfm_cleared")
                 changed = True
 
+        trial_fields = bool(
+            self.state.activation_code or self.state.activated_at or self.state.expires_at
+        )
+        if trial_fields and not self.state.trial_current(now=now):
+            had_expiry = bool(self.state.expires_at)
+            self._clear_trial_fields()
+            issues.append("trial_expired" if had_expiry else "trial_incomplete")
+            changed = True
+
         if changed:
             self.save()
         return issues
+
+    def activate_code(self, code: str, *, now: datetime | None = None) -> dict[str, Any]:
+        """Activate a one-time FS-1D / FS-30D trial code.
+
+        On hit and unused: write activated_at + expires_at and mark the code used.
+        Does not set USDT `active`, does not change tier, and does not enable Pro dfm.
+        """
+        key = normalize_code(code)
+        days = duration_days(key)
+        if days is None:
+            raise ValueError("无效激活码")
+        if key in self.state.used_codes:
+            raise ValueError("激活码已使用")
+
+        moment = now or datetime.now(timezone.utc)
+        if moment.tzinfo is None:
+            moment = moment.replace(tzinfo=timezone.utc)
+        else:
+            moment = moment.astimezone(timezone.utc)
+        expires = moment + timedelta(days=days)
+        self.state.activation_code = key
+        self.state.activated_at = moment.isoformat()
+        self.state.expires_at = expires.isoformat()
+        self.state.used_codes.append(key)
+        self.save()
+        return {
+            "ok": True,
+            "code": key,
+            "duration_days": days,
+            "activated_at": self.state.activated_at,
+            "expires_at": self.state.expires_at,
+            "tier": self.state.tier.value,
+            "usdt_active": self.state.active,
+        }
+
+    def _clear_trial_fields(self) -> None:
+        self.state.activation_code = ""
+        self.state.activated_at = ""
+        self.state.expires_at = ""
 
     def apply_usdt_payment_callback(
         self,
@@ -146,3 +205,14 @@ class LicenseStore:
             "expected_usdt": expected,
             "extra_seat_usdt": EXTRA_SEAT_USDT_PER_YEAR,
         }
+
+
+def _load_used_codes(raw: Any) -> list[str]:
+    if not isinstance(raw, list):
+        return []
+    used: list[str] = []
+    for item in raw:
+        key = normalize_code(str(item))
+        if key and key not in used:
+            used.append(key)
+    return used

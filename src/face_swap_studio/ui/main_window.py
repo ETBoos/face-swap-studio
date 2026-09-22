@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-import sys
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -35,13 +36,29 @@ from face_swap_studio.engines.config_builder import build_engine_config
 from face_swap_studio.engines.deepfacelive_stub import create_engine
 from face_swap_studio.engines.lifecycle import replace_engine, shutdown_engine
 from face_swap_studio.engines.modes import MODE_ENGINE_IDS, MODE_LABELS_ZH, WorkMode
-from face_swap_studio.licensing.plans import PlanTier
 from face_swap_studio.licensing.store import LicenseStore
 from face_swap_studio.ui.settings_dialog import DIALOG_KEYS, SettingsDialog
 
 
+def _format_expiry(iso: str) -> str:
+    try:
+        moment = datetime.fromisoformat(iso)
+    except ValueError:
+        return iso
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _default_projects_root() -> Path:
     return Path.home() / "FaceSwapStudio" / "projects"
+
+
+_LOCKED_PREVIEW_ZH = (
+    "未激活或试用已到期，不能开始预览。\n"
+    "请点击「激活」输入 FS-1D（1 天）或 FS-30D（30 天）试用码。\n"
+    "USDT 年费开通后也可预览。试用到期回到未激活，不会自动升级 Pro。"
+)
 
 
 class MainWindow(QMainWindow):
@@ -52,7 +69,9 @@ class MainWindow(QMainWindow):
 
         self.store = ProjectStore(projects_root or _default_projects_root())
         self.log = UsageLog(self.store.root.parent / "logs" / "usage.jsonl")
-        self.license = LicenseStore(self.store.root.parent / "license.json")
+        self.license = LicenseStore(
+            self.store.root.parent / "license.json", enforce_gate=False
+        )
         gate_issues = self.license.enforce_startup_gate()
         if gate_issues:
             self.log.record("license_gate", issues=gate_issues)
@@ -85,6 +104,8 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.setInterval(33)  # ~30 FPS tick
         self._timer.timeout.connect(self._on_tick)
+        if self._should_prompt_activation():
+            QTimer.singleShot(0, self._prompt_activation)
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -191,16 +212,21 @@ class MainWindow(QMainWindow):
         actions = QHBoxLayout()
         self.btn_start = QPushButton("开始预览")
         self.btn_start.clicked.connect(self._start_preview)
+        self.btn_start.setEnabled(False)
         self.btn_stop = QPushButton("停止")
         self.btn_stop.clicked.connect(self._stop_preview)
         self.btn_stop.setEnabled(False)
         self.btn_export = QPushButton("导出参考帧")
         self.btn_export.clicked.connect(self._export_frame)
+        self.btn_export.setEnabled(False)
+        self.btn_activate = QPushButton("激活")
+        self.btn_activate.clicked.connect(self._prompt_activation)
         self.btn_settings = QPushButton("设置…")
         self.btn_settings.clicked.connect(self._open_settings)
         actions.addWidget(self.btn_start)
         actions.addWidget(self.btn_stop)
         actions.addWidget(self.btn_export)
+        actions.addWidget(self.btn_activate)
         actions.addWidget(self.btn_settings)
         right_l.addLayout(actions)
 
@@ -345,6 +371,10 @@ class MainWindow(QMainWindow):
     def _start_preview(self) -> None:
         if self._previewing:
             return
+        if not self.license.allows_preview():
+            self._sync_activation_ui()
+            QMessageBox.information(self, "未激活", _LOCKED_PREVIEW_ZH)
+            return
         if self.current and not self.current.consent_checklist_acked:
             reply = QMessageBox.question(
                 self,
@@ -451,12 +481,22 @@ class MainWindow(QMainWindow):
             self.engine.stop()
         except Exception:
             pass
-        self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
-        self.statusBar().showMessage("已停止预览")
+        self._sync_activation_ui()
+        if self.license.allows_preview():
+            self.statusBar().showMessage("已停止预览")
         self.log.record("preview_stop")
 
     def _on_tick(self) -> None:
+        if not self.license.allows_preview():
+            self.license.enforce_startup_gate()
+            self._stop_preview()
+            QMessageBox.information(
+                self,
+                "试用已到期",
+                "试用已结束，已回到未激活。不会自动升级 Pro。\n请重新激活，或完成 USDT 年费开通。",
+            )
+            return
         frame = self.engine.read_frame()
         status = self.engine.status()
         if status == EngineStatus.ERROR:
@@ -495,6 +535,9 @@ class MainWindow(QMainWindow):
         )
 
     def _export_frame(self) -> None:
+        if not self.license.allows_preview():
+            QMessageBox.information(self, "未激活", _LOCKED_PREVIEW_ZH)
+            return
         if not self.current:
             QMessageBox.information(self, "提示", "请先选择项目（参考帧将写入项目 exports/）")
             return
@@ -505,8 +548,6 @@ class MainWindow(QMainWindow):
             return
         export_dir = self.store.project_dir(self.current.name) / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
-        from datetime import datetime, timezone
-
         name = f"ref_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.png"
         out = export_dir / name
         img = frame.image
@@ -569,12 +610,10 @@ class MainWindow(QMainWindow):
         self.engine_info.setText(f"引擎: {caps_name}（开始预览后启动）")
         self._sync_dfm_label()
         self._refresh_face_label()
-        self.statusBar().showMessage(
-            f"{MODE_LABELS_ZH[mode]} | 授权:{self.license.state.tier.value}"
-        )
         self.log.record("mode_change", mode=mode.value, tier=self.license.state.tier.value)
         if pro and not pro_ok:
             QMessageBox.information(self, "授权提示", self._pro_license_message())
+        self._sync_activation_ui()
 
     def _select_mode(self, mode: WorkMode) -> None:
         idx = self.mode_combo.findData(mode.value)
@@ -637,6 +676,75 @@ class MainWindow(QMainWindow):
             self._reload_assets()
         self.log.record("instant_source_face", path=path)
         self._refresh_face_label()
+
+    def _should_prompt_activation(self) -> bool:
+        if self.license.allows_preview():
+            return False
+        if os.environ.get("FSS_SMOKE") == "1":
+            return False
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return False
+        return True
+
+    def _prompt_activation(self) -> None:
+        """Activate UI. Startup schedules the same dialog when the seat is locked."""
+        if self.license.allows_preview():
+            self._sync_activation_ui()
+            return
+        code, ok = QInputDialog.getText(
+            self,
+            "激活",
+            "输入试用激活码（FS-1D 一天 / FS-30D 三十天）。\n"
+            "正式年费仍走 USDT。试用到期不会升级 Pro。",
+        )
+        if not ok or not str(code).strip():
+            self._sync_activation_ui()
+            return
+        try:
+            result = self.license.activate_code(str(code))
+        except ValueError as exc:
+            self.log.record("activation_fail", reason=str(exc))
+            QMessageBox.warning(self, "激活失败", str(exc))
+            self._sync_activation_ui()
+            return
+        self.log.record(
+            "activation_ok",
+            duration_days=result["duration_days"],
+            expires_at=result["expires_at"],
+        )
+        QMessageBox.information(
+            self,
+            "已激活",
+            f"试用 {result['duration_days']} 天，到期 {result['expires_at']}。\n"
+            "到期后回到未激活，不会自动升级 Pro。",
+        )
+        self._on_mode_changed()
+
+    def _sync_activation_ui(self) -> None:
+        unlocked = self.license.allows_preview()
+        self.btn_activate.setEnabled(True)
+        self.btn_export.setEnabled(unlocked)
+        self.btn_start.setEnabled(unlocked and not self._previewing)
+        if self._previewing:
+            return
+        if not unlocked:
+            self.preview_label.setText(_LOCKED_PREVIEW_ZH)
+        self.statusBar().showMessage(self._activation_status_text())
+
+    def _activation_status_text(self) -> str:
+        mode_val = self.mode_combo.currentData()
+        try:
+            mode = WorkMode(mode_val)
+        except ValueError:
+            mode = WorkMode.SIMPLE
+        state = self.license.state
+        if state.usdt_paid():
+            lic = f"USDT {state.tier.value} 已开通"
+        elif state.trial_current():
+            lic = f"试用至 {_format_expiry(state.expires_at)}"
+        else:
+            lic = "未激活"
+        return f"{MODE_LABELS_ZH[mode]} | {lic}"
 
     def _pro_license_ok(self, *, notify: bool) -> bool:
         if self.license.state.allows_pro_dfm():
