@@ -24,6 +24,10 @@ DIALOG_KEYS = (
     "dlc_session",
     "execution_provider",
     "preview_target",
+    # 专模 / DeepFaceLive. Empty strings are kept so a cleared field round-trips.
+    "dfm_path",
+    "deepfacelive_root",
+    "userdata_dir",
 )
 
 
@@ -41,6 +45,9 @@ class SettingsDialog(QDialog):
         dlc_session: str = "preview",
         execution_provider: str = "",
         preview_target: str = "",
+        dfm_path: str = "",
+        deepfacelive_root: str = "",
+        userdata_dir: str = "",
         **_ignored,
     ) -> None:
         super().__init__(parent)
@@ -105,6 +112,22 @@ class SettingsDialog(QDialog):
         self.preview_target_edit.setPlaceholderText("含人脸的目标静帧；留空则抓一张摄像头画面")
         form.addRow("首帧目标静帧", self.preview_target_edit)
 
+        pro_note = QLabel("专模使用本机 DeepFaceLive，需要已有 .dfm。不会走 Deep-Live-Cam。")
+        pro_note.setWordWrap(True)
+        form.addRow("", pro_note)
+
+        self.dfl_root_edit = QLineEdit(str(deepfacelive_root))
+        self.dfl_root_edit.setPlaceholderText(r"C:\DeepFaceLive_NVIDIA 或留空用 DEEPFACELIVE_ROOT")
+        form.addRow("专模 DeepFaceLive 目录", self.dfl_root_edit)
+
+        self.userdata_edit = QLineEdit(str(userdata_dir))
+        self.userdata_edit.setPlaceholderText("留空则使用安装目录下 userdata")
+        form.addRow("专模 userdata 目录", self.userdata_edit)
+
+        self.dfm_edit = QLineEdit(str(dfm_path))
+        self.dfm_edit.setPlaceholderText(r"已有模型，例如 D:\models\actor.dfm")
+        form.addRow("专模 .dfm", self.dfm_edit)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -126,4 +149,7 @@ class SettingsDialog(QDialog):
             "dlc_session": self.session_combo.currentData(),
             "execution_provider": self.provider_edit.text().strip(),
             "preview_target": self.preview_target_edit.text().strip(),
+            "dfm_path": self.dfm_edit.text().strip(),
+            "deepfacelive_root": self.dfl_root_edit.text().strip(),
+            "userdata_dir": self.userdata_edit.text().strip(),
         }

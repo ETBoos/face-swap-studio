@@ -12,12 +12,14 @@ def test_dfm_path_survives_settings_to_config():
             "gpu_device": "cuda:0",
             "dfm_path": r"D:\models\actor.dfm",
             "deepfacelive_root": r"D:\DeepFaceLive",
+            "userdata_dir": r"D:\dfl-userdata",
         },
         source_face_paths=["a.png"],
         watermark_text=None,
     )
     assert cfg.extra["dfm_path"] == r"D:\models\actor.dfm"
     assert cfg.extra["deepfacelive_root"] == r"D:\DeepFaceLive"
+    assert cfg.extra["userdata_dir"] == r"D:\dfl-userdata"
     assert cfg.source_face_paths == ["a.png"]
 
 

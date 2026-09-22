@@ -68,6 +68,7 @@ class MainWindow(QMainWindow):
             "dfm_path": "",
             "facefusion_root": "",
             "deepfacelive_root": "",
+            "userdata_dir": "",
             "deeplivecam_root": "",
             "deeplivecam_python": "",
             "dlc_session": "preview",
@@ -326,13 +327,18 @@ class MainWindow(QMainWindow):
             vals = dlg.values()
             self.settings.update(vals)
             self._sync_session_combo()
+            self._sync_dfm_label()
             engine = vals.get("engine")
             if engine == "deeplivecam":
                 self._select_mode(WorkMode.SIMPLE)
             elif engine == "deepfacelive":
                 self._select_mode(WorkMode.PRO)
             else:
+                if self._previewing:
+                    self._stop_preview()
                 self.settings["engine"] = "placeholder"
+                self.engine = replace_engine(self.engine, "placeholder", factory=create_engine)
+                self.preview_label.clear()
                 self.engine_info.setText("引擎: placeholder（调试占位，无换脸）")
             self._refresh_face_label()
 
@@ -350,6 +356,11 @@ class MainWindow(QMainWindow):
 
         engine_name = self._resolve_engine_name()
         self.settings["engine"] = engine_name
+        if engine_name == "deepfacelive":
+            if not self._pro_license_ok(notify=True):
+                return
+            if not self._ensure_dfm_selected():
+                return
         if engine_name == "deeplivecam" and not self._source_face_paths():
             self._choose_source_face()
         source_faces = self._source_face_paths()
@@ -517,24 +528,23 @@ class MainWindow(QMainWindow):
 
     def _on_mode_changed(self, _index: int = 0) -> None:
         mode_val = self.mode_combo.currentData()
-        mode = WorkMode(mode_val)
-        if mode == WorkMode.PRO and not self.license.state.allows_pro_dfm():
-            QMessageBox.information(
-                self,
-                "授权提示",
-                "顶级 .dfm 模式需要 Pro/Studio 且 USDT 开授权后启用。\n"
-                f"当前档位: {self.license.state.tier.value} active={self.license.state.active}",
-            )
-        self.settings["work_mode"] = mode_val
+        try:
+            mode = WorkMode(mode_val)
+        except ValueError:
+            mode = WorkMode.SIMPLE
+        # Stop the live session and drop the previous process before the new engine exists.
+        self.settings["work_mode"] = mode.value
         self.settings["engine"] = MODE_ENGINE_IDS[mode]
         if self._previewing:
             self._stop_preview()
         self.engine = replace_engine(
             self.engine, self.settings["engine"], factory=create_engine
         )
-        pro_ok = mode == WorkMode.PRO and self.license.state.allows_pro_dfm()
+        self.preview_label.clear()
+        pro = mode == WorkMode.PRO
+        pro_ok = pro and self._pro_license_ok(notify=False)
         self.btn_dfm.setEnabled(pro_ok)
-        self.dfm_label.setVisible(mode == WorkMode.PRO)
+        self.dfm_label.setVisible(pro)
         instant = mode == WorkMode.SIMPLE
         self.btn_face.setEnabled(instant)
         self.btn_face.setVisible(instant)
@@ -557,11 +567,14 @@ class MainWindow(QMainWindow):
             )
             caps_name = "deepfacelive"
         self.engine_info.setText(f"引擎: {caps_name}（开始预览后启动）")
+        self._sync_dfm_label()
         self._refresh_face_label()
         self.statusBar().showMessage(
             f"{MODE_LABELS_ZH[mode]} | 授权:{self.license.state.tier.value}"
         )
-        self.log.record("mode_change", mode=mode_val, tier=self.license.state.tier.value)
+        self.log.record("mode_change", mode=mode.value, tier=self.license.state.tier.value)
+        if pro and not pro_ok:
+            QMessageBox.information(self, "授权提示", self._pro_license_message())
 
     def _select_mode(self, mode: WorkMode) -> None:
         idx = self.mode_combo.findData(mode.value)
@@ -625,6 +638,47 @@ class MainWindow(QMainWindow):
         self.log.record("instant_source_face", path=path)
         self._refresh_face_label()
 
+    def _pro_license_ok(self, *, notify: bool) -> bool:
+        if self.license.state.allows_pro_dfm():
+            return True
+        if notify:
+            QMessageBox.information(self, "授权提示", self._pro_license_message())
+        return False
+
+    def _pro_license_message(self) -> str:
+        return (
+            "专模（DeepFaceLive · .dfm）需要 Pro/Studio 且 USDT 开授权后启用。\n"
+            f"当前档位: {self.license.state.tier.value} active={self.license.state.active}"
+        )
+
+    def _sync_dfm_label(self) -> None:
+        dfm = str(self.settings.get("dfm_path") or "")
+        if not dfm:
+            self.dfm_label.setText("未选择 .dfm")
+            return
+        name = Path(dfm).name
+        if Path(dfm).is_file():
+            self.dfm_label.setText(name)
+        else:
+            self.dfm_label.setText(f"{name}（文件不存在）")
+
+    def _ensure_dfm_selected(self) -> bool:
+        """专模 requires an existing .dfm. Returns False if the user does not pick one."""
+        dfm = str(self.settings.get("dfm_path") or "")
+        if dfm and Path(dfm).is_file():
+            self._sync_dfm_label()
+            return True
+        self._choose_dfm()
+        dfm = str(self.settings.get("dfm_path") or "")
+        if dfm and Path(dfm).is_file():
+            return True
+        QMessageBox.information(
+            self,
+            "需要 .dfm",
+            "专模模式使用本机 DeepFaceLive，请先选择已有的 .dfm 文件。",
+        )
+        return False
+
     def _choose_dfm(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
             self, "选择 DeepFaceLive 模型 (.dfm)", "", "DFM (*.dfm);;所有文件 (*)"
@@ -632,7 +686,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self.settings["dfm_path"] = path
-        self.dfm_label.setText(Path(path).name)
+        self._sync_dfm_label()
         self.log.record("dfm_selected", path=path)
 
     def closeEvent(self, event) -> None:  # noqa: N802
