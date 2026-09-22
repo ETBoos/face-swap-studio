@@ -31,7 +31,8 @@
 |------|------|------|
 | 微信 PC 出站主场景 | **待证据** | 无版本组合、无手机录屏 |
 | WhatsApp Desktop 正式支持 | **待证据** | 同上；文档仅保留「目标路径」 |
-| FaceFusion 实时档 vs 画质档 A/B | **待证据** | 见 `ENGINE_VERSION_PIN.md`，未同素材实测 |
+| 即用 Deep-Live-Cam 静帧首帧 / Live 窗口 | **待证据** | 适配器已接线；无 NVIDIA Win 摄像头录屏。见 `DEEPLIVECAM_INSTANT.md` |
+| FaceFusion 实时档 vs 画质档 A/B | **不再是即用引擎** | 历史笔记。壳不启动 FaceFusion |
 | DeepFaceLive 固定 NVIDIA 构建 | **待钉死** | 归档项目；sha256 空缺 |
 
 ## 填表规则

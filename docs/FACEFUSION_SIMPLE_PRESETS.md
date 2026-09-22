@@ -1,3 +1,7 @@
+# FaceFusion 参数笔记（历史，不是当前即用引擎）
+
+**产品即用模式已改为 Deep-Live-Cam**（导入脸图）。壳不会启动 FaceFusion。验收与配置见 `docs/DEEPLIVECAM_INSTANT.md` 与 `docs/SIMPLE_ENGINE_FOUR_STAGE.md`。下面的表格只保留作旧调研笔记，不要当成壳的配置键。
+
 # FaceFusion 简易模式 · 最高像真度推荐参数（P0）
 
 真机（Win+NVIDIA）一到即可按此开跑。目标：先出可用样片验像真度，不追求一键安装体验。

@@ -44,7 +44,7 @@ if errorlevel 1 (
 
 echo.
 echo [完成] 安装成功。请运行 scripts\start-win.bat 启动。
-echo [注意] 当前为占位引擎，未集成 DeepFaceLive，无真实换脸。
+echo [注意] 即用模式会启动本机 Deep-Live-Cam（需 DEEP_LIVE_CAM_ROOT）。未安装 DLC/DFL 时没有换脸画面。
 echo [合规] 仅限授权影视用途。
 echo.
 pause

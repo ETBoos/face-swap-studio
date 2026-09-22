@@ -15,7 +15,7 @@
 ## 1. 测试顺序（强制）
 
 1. **测试画面出站**：纯色/走动秒表全屏 → L1 或 L3 → 微信 → 手机录屏（证明出站链路，不接换脸）
-2. **简易模式**：照片脸 + 物理摄像头实时
+2. **即用模式（Deep-Live-Cam）**：照片脸。先验静帧首帧进预览窗，再验 DLC Live 窗口 + 物理摄像头
 3. **顶级模式**：`.dfm` + 物理摄像头实时
 4. 每模式交：**本机预览录屏 + 手机接收端录屏**
 
@@ -27,7 +27,7 @@
 - 虚拟摄像头实现与版本（L1：DroidCam Virtual Output **插件+驱动**；勿装成手机输入插件）
 - 微信 PC / WhatsApp Desktop **精确版本号**
 - 出站设备在系统中的**真实设备名**
-- FaceFusion / DeepFaceLive 构建 ID、模型文件名、sha256（见 `ENGINE_VERSION_PIN.md`）
+- Deep-Live-Cam / DeepFaceLive 构建 ID（commit）、模型文件名、sha256（见 `ENGINE_VERSION_PIN.md`）
 - 采集卡型号（若 L3）+ USB 口位置（后置直连）
 
 ## 3. 量化指标（测前锁定；真机填数）

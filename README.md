@@ -1,8 +1,9 @@
 # FaceSwap Studio · 剧组换脸预览工作站
 
 面向影视剧组的 **实时换脸预览工作站（产品壳）**。  
-本仓库是 **商业化产品外壳 + 安装脚本 + 引擎适配接口**，默认使用占位引擎；  
-**尚未接入 DeepFaceLive / InsightFace 真换脸**。在 GPU 工作站集成成熟开源实时管线之前，请勿对外宣称“已可换脸”。
+本仓库是 **商业化产品外壳 + 安装脚本 + 引擎适配**。  
+即用模式启动上游 **Deep-Live-Cam**（导入脸图）；专模模式启动上游 **DeepFaceLive**（`.dfm`）。  
+两边都**不在本仓库里实现换脸**。没有对应安装目录和 NVIDIA Windows 验收之前，不要对外说「这台机器已经换脸成功」。
 
 > **仅限授权影视用途 · AUTHORIZED FILM USE ONLY**
 
@@ -23,7 +24,7 @@
 | 名称 | FaceSwap Studio（中文：剧组换脸预览工作站） |
 | 用户 | 剧组 / 后期预览岗，使用**已授权**脸部素材 |
 | 能力（目标） | 项目管理、授权素材导入、摄像头实时预览、参考帧导出 |
-| 引擎策略 | 后期包装成熟开源实时管线（DeepFaceLive / InsightFace），本 MVP **不训练新模型** |
+| 引擎策略 | 即用 Deep-Live-Cam，专模 DeepFaceLive。本仓库不训练模型 |
 | 合规 | UI 内授权清单、水印开关、本地使用日志桩 |
 
 ## 当前实现 vs 桩（stub）
@@ -34,9 +35,10 @@
 | 授权素材导入 / 授权勾选 / 水印选项 | **可用** |
 | 使用日志（JSONL） | **可用（本地桩）** |
 | PySide6 中文 GUI | **可用（壳）** |
-| 摄像头预览 | **占位**：有摄像头则显示画面+横幅，否则合成 slate |
-| DeepFaceLive 适配器 | **stub only**（见 `engines/deepfacelive_stub.py`） |
-| 真实人脸交换 | **未实现** |
+| 摄像头预览 | 占位引擎仍可用（设置里选「占位」）。即用默认不再走占位 |
+| 即用 Deep-Live-Cam | **已接线**：定位安装目录并启动上游 `run.py`。首帧进预览窗；实时在 DLC 窗口。**未在本环境的 NVIDIA/摄像头上验证** |
+| 专模 DeepFaceLive | **已接线**（`engines/deepfacelive.py`）：检查 `.dfm` 并启动官方包。画面在 DFL 窗口 |
+| 真实人脸交换 | **不在本仓库实现**。算法只存在于 Deep-Live-Cam / DeepFaceLive |
 
 ---
 
@@ -101,7 +103,9 @@ face-swap-studio/
     engines/
       base.py              # FaceSwapEngine 适配接口
       placeholder.py       # 占位预览引擎（真实可用的壳）
-      deepfacelive_stub.py # DeepFaceLive 接入说明 + stub
+      deeplivecam.py         # 即用：启动 Deep-Live-Cam
+      deepfacelive.py        # 专模：启动 DeepFaceLive
+      dlc_live_bootstrap.py  # 让 DLC GUI 带上已选源脸（不传 -s）
     ui/                    # PySide6 中文界面
   scripts/setup-win.bat
   scripts/start-win.bat
@@ -121,15 +125,12 @@ face-swap-studio/
 
 ---
 
-## DeepFaceLive 接入（概要）
+## 即用（Deep-Live-Cam）与专模（DeepFaceLive）
 
-详见 `src/face_swap_studio/engines/deepfacelive_stub.py` 模块文档。建议：
+- 即用：`docs/DEEPLIVECAM_INSTANT.md`。设置 `DEEP_LIVE_CAM_ROOT`，选脸图，默认把 DLC 静帧输出显示为本壳首帧。
+- 专模：`docs/PRO_DEEPFACELIVE.md`。加载 `.dfm` 并启动 DeepFaceLive，预览在 DFL 窗口。
 
-- 独立 venv/conda 安装 DFL + CUDA；
-- 通过 **子进程 / 共享内存 / 本地 socket** 与 PySide6 进程隔离；
-- 实现同一 `FaceSwapEngine` 接口后在设置中切换引擎。
-
-**请勿在本阶段克隆体积庞大的 ML 仓库。**
+两个引擎都是独立 venv 里的子进程。**不要把 Deep-Live-Cam 或 DeepFaceLive 克隆进本仓库。**
 
 ---
 

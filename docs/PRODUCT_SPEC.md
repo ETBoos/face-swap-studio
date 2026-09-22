@@ -66,7 +66,7 @@
 
 | 功能 | 说明 |
 |------|------|
-| 实时换脸预览 | DeepFaceLive（或 InsightFace 实时方案）适配器 |
+| 实时换脸预览 | 即用：Deep-Live-Cam（导入脸图）。专模：DeepFaceLive + `.dfm`。算法都在上游项目里 |
 | GPU 加速 | RTX 4080/4090，设备字符串可配 |
 | 多素材切换 | 项目内授权脸切换（视引擎能力） |
 
@@ -94,7 +94,7 @@
 
 1. 本仓库源码 / 压缩包（`face-swap-studio-transfer.tar.gz`）  
 2. Windows 一键安装与启动脚本  
-3. 引擎适配接口文档（`engines/deepfacelive_stub.py`）  
+3. 引擎适配：即用 `engines/deeplivecam.py`（Deep-Live-Cam）；专模 `engines/deepfacelive.py`  
 4. 现场：在客户 4090 机器上完成 DFL 接入与验收（另行工时）
 
 ## 7. 路线图（简）
@@ -114,14 +114,16 @@
 | 与成片品质落差 | 定位为“预览沟通工具”，非最终 VFX 成片 |
 
 
-## 3.3 双模式（2026-09 更新）
+## 3.3 双模式（2026-09-22）
 
 | 模式 | 后端 | 用户动作 |
 |------|------|----------|
-| 简易 | FaceFusion | 导入目标脸，简单配置即可预览 |
-| 顶级 | DeepFaceLive | 导入训练好的 `.dfm` 后实时预览 |
+| **即用** | **Deep-Live-Cam** | 导入一张脸图。默认走 DLC 静帧命令，首帧进本壳预览窗；实时摄像头在 DLC 自己的 Live 窗口 |
+| **专模** | **DeepFaceLive** | 导入训练好的 `.dfm` 后，由 DeepFaceLive 窗口实时预览 |
 
-壳负责模式切换；真推理分别由 FaceFusion / DeepFaceLive 适配器在 GPU 机接线。
+壳负责模式切换、项目、授权和 USDT 档位。换脸算法不在本仓库。即用的查找路径、配置键和「选图→首帧」步骤见 `docs/DEEPLIVECAM_INSTANT.md`。验收勾选见 `docs/SIMPLE_ENGINE_FOUR_STAGE.md`。专模路径不改。
+
+FaceFusion 不再是即用引擎（旧设置里的 `facefusion` 只会启动 Deep-Live-Cam）。
 
 
 ## 出站路径优先级（主链路，非 P2）
@@ -135,7 +137,7 @@
 
 ## 微信 PC 出站技术档位（L1→L2→L3）
 
-引擎（FaceFusion / DeepFaceLive）不改为微信定制；只解决「出站设备被微信认成摄像头」。
+引擎（即用 Deep-Live-Cam / 专模 DeepFaceLive）不改为微信定制；只解决「出站设备被微信认成摄像头」。
 
 | 档 | 做法 | 验收 |
 |----|------|------|

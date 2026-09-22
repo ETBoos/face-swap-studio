@@ -13,7 +13,7 @@
 
 ## 推荐接线
 
-物理摄像头 → FaceFusion / DeepFaceLive → OBS 场景（窗口/游戏采集预览）→ **DroidCam Virtual Output 激活** → 微信/WhatsApp 选 `DroidCam Video`（以设备管理器实名为准）
+物理摄像头 → Deep-Live-Cam（即用）或 DeepFaceLive（专模）→ OBS 场景（窗口/游戏采集预览）→ **DroidCam Virtual Output 激活** → 微信/WhatsApp 选 `DroidCam Video`（以设备管理器实名为准）
 
 OBS 画布分辨率/FPS 与通话软件所选档位一致（常见 1280×720 或 1920×1080 @30）。
 
