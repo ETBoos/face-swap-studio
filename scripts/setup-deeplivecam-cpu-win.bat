@@ -47,7 +47,7 @@ if exist "%DLC_DIR%\run.py" (
 )
 
 if "%USE_ZIP%"=="0" (
-  echo [1/4] git clone ...
+  echo [1/5] git clone ...
   git clone --depth 1 https://github.com/hacksider/Deep-Live-Cam.git "%DLC_DIR%"
   if errorlevel 1 (
     echo [错误] git clone 失败，改试 ZIP...
@@ -56,7 +56,7 @@ if "%USE_ZIP%"=="0" (
 )
 
 if "%USE_ZIP%"=="1" (
-  echo [1/4] 下载 ZIP...
+  echo [1/5] 下载 ZIP...
   set "ZIP=%TEMP%\Deep-Live-Cam.zip"
   powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://github.com/hacksider/Deep-Live-Cam/archive/refs/heads/main.zip' -OutFile $env:ZIP"
   if errorlevel 1 (
@@ -79,7 +79,7 @@ if not exist "%DLC_DIR%\run.py" (
 
 :venv
 cd /d "%DLC_DIR%"
-echo [2/4] 创建 venv ...
+echo [2/5] 创建 venv ...
 if not exist "venv\Scripts\python.exe" (
   %PY% -m venv venv
   if errorlevel 1 (
@@ -90,16 +90,67 @@ if not exist "venv\Scripts\python.exe" (
 )
 
 call venv\Scripts\activate.bat
-echo [3/4] pip install -r requirements.txt （清华源）...
+echo [3/5] 升级 pip，并安装预编译 insightface（不从源码编译）...
 python -m pip install -U pip
-python -m pip install -r requirements.txt -i %MIRROR%
 if errorlevel 1 (
-  echo [错误] pip 安装失败，可重跑本脚本或把报错发群。
+  echo [错误] 升级 pip 失败
   pause
   exit /b 1
 )
 
-echo [4/4] 下载模型到 models\ ...
+set "PY_MINOR="
+for /f %%v in ('python -c "import sys; print(sys.version_info.minor)"') do set "PY_MINOR=%%v"
+if not defined PY_MINOR (
+  echo [错误] 无法检测 venv 里的 Python 版本。已停止，不会从源码编译 insightface。
+  pause
+  exit /b 1
+)
+echo 检测到 Python 3.%PY_MINOR%
+
+set "IF_TAG="
+if "%PY_MINOR%"=="11" set "IF_TAG=cp311-cp311"
+if "%PY_MINOR%"=="12" set "IF_TAG=cp312-cp312"
+if "%PY_MINOR%"=="13" set "IF_TAG=cp313-cp313"
+if not defined IF_TAG (
+  echo [错误] Python 3.%PY_MINOR% 没有对应的预编译 insightface 轮子（仅 3.11 / 3.12 / 3.13）。
+  echo        请改用 Python 3.11 或 3.12，或安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
+  echo        本脚本不会从源码编译 insightface。
+  pause
+  exit /b 1
+)
+
+set "IF_WHL=insightface-0.7.3-%IF_TAG%-win_amd64.whl"
+set "IF_URL=https://github.com/Gourieff/Assets/raw/main/Insightface/%IF_WHL%"
+set "IF_PATH=%TEMP%\%IF_WHL%"
+echo 下载 %IF_WHL%
+powershell -NoProfile -Command "try { Invoke-WebRequest -Uri $env:IF_URL -OutFile $env:IF_PATH -UseBasicParsing -Headers @{ 'User-Agent' = 'FaceSwapStudio-setup' }; if ((Get-Item $env:IF_PATH).Length -lt 100000) { exit 1 } } catch { Write-Host $_.Exception.Message; exit 1 }"
+if errorlevel 1 (
+  echo [错误] 预编译 insightface 下载失败（Python 3.%PY_MINOR%：%IF_WHL%）。
+  echo        请安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
+  echo        本脚本不会从源码编译 insightface，已停止安装。
+  pause
+  exit /b 1
+)
+
+python -m pip install "%IF_PATH%" -i %MIRROR%
+if errorlevel 1 (
+  echo [错误] 预编译 insightface 安装失败（Python 3.%PY_MINOR%）。
+  echo        请安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
+  echo        本脚本不会从源码编译 insightface，已停止安装。
+  pause
+  exit /b 1
+)
+
+echo [4/5] pip install -r requirements.txt （清华源）...
+python -m pip install -r requirements.txt -i %MIRROR% --only-binary insightface
+if errorlevel 1 (
+  echo [错误] pip 安装失败，可重跑本脚本或把报错发群。
+  echo        insightface 只使用上面的预编译轮；若仍失败，请安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
+  pause
+  exit /b 1
+)
+
+echo [5/5] 下载模型到 models\ ...
 if not exist "models" mkdir models
 powershell -NoProfile -Command ^
   "$m='models';" ^
