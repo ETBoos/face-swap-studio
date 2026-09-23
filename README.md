@@ -69,6 +69,8 @@ scripts\setup-all-win.bat
 
 打开后也可以点「环境监测」：缺的组件会走同一套 CPU 安装，已经有的不重新下载，路径自动写入。打开「设置」应能看到 Deep-Live-Cam 目录。本仓库没有在显卡或摄像头上验证换脸。
 
+双击 `scripts\setup-all-win.bat`、`scripts\setup-win.bat` 或 CPU 安装脚本时，失败和成功都会停住窗口，看完提示再按键关闭。若窗口仍然一闪而过，改双击 `scripts\setup-all-win-debug.bat`（它只调用一键安装，最后一定会 pause）。`scripts\start-win.bat` 启动成功会关掉自己的黑窗口（交给 pythonw）；启动失败会停住并显示原因。
+
 开发者如果只装壳、不装 Deep-Live-Cam：
 
 1. 安装 [Python 3.11+](https://www.python.org/downloads/)（勾选 Add to PATH）。

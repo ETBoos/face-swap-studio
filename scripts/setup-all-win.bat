@@ -3,7 +3,9 @@ REM FaceSwap Studio — one double-click for non-technical Windows users.
 REM 1) Find Python. If %%USERPROFILE%%\Deep-Live-Cam is missing, install it
 REM    with scripts\setup-deeplivecam-cpu-win.bat (CPU, prebuilt insightface).
 REM 2) Write deeplivecam_root into %%USERPROFILE%%\FaceSwapStudio\settings.json.
-REM 3) Put a Desktop shortcut named 打开换脸 that launches scripts\start-win.bat.
+REM 3) Put a Desktop shortcut named 打开换脸 that launches pythonw.
+REM Failure and success both pause. exit /b stays outside parentheses so
+REM cmd /c (Explorer double-click) does not close the window early.
 chcp 65001 >nul
 setlocal EnableExtensions
 title FaceSwap Studio 一键安装
@@ -33,28 +35,15 @@ if not defined PY (
   )
 )
 
-if not defined PY (
-  echo [错误] 未找到 python 或 py。请安装 Python 3.11、3.12 或 3.13，并勾选 Add to PATH。
-  echo https://www.python.org/downloads/
-  pause
-  exit /b 1
-)
+if not defined PY goto :fail_nopy
 
 %PY% -c "import sys; raise SystemExit(0 if sys.version_info >= (3, 11) else 1)"
-if errorlevel 1 (
-  echo [错误] 需要 Python 3.11 或更高版本。
-  pause
-  exit /b 1
-)
+if errorlevel 1 goto :fail_ver
 
 echo [1/4] 安装 FaceSwap Studio ...
 set "FSS_SETUP_NOPAUSE=1"
 call "%~dp0setup-win.bat"
-if errorlevel 1 (
-  echo [错误] FaceSwap Studio 安装失败。
-  pause
-  exit /b 1
-)
+if errorlevel 1 goto :fail_studio
 
 echo.
 echo [2/4] 检查 Deep-Live-Cam ...
@@ -69,42 +58,22 @@ if "%DLC_READY%"=="1" (
 ) else (
   echo [信息] 还没有可用的 Deep-Live-Cam，开始 CPU 一键安装 ...
   call "%~dp0setup-deeplivecam-cpu-win.bat"
-  if errorlevel 1 (
-    echo [错误] Deep-Live-Cam 安装失败。
-    pause
-    exit /b 1
-  )
+  if errorlevel 1 goto :fail_dlc
 )
 
-if not exist "%DLC_DIR%\run.py" (
-  echo [错误] 安装后仍未找到 %DLC_DIR%\run.py
-  pause
-  exit /b 1
-)
-if not exist "%DLC_DIR%\modules\core.py" (
-  echo [错误] 安装后仍未找到 %DLC_DIR%\modules\core.py
-  pause
-  exit /b 1
-)
+if not exist "%DLC_DIR%\run.py" goto :fail_runpy
+if not exist "%DLC_DIR%\modules\core.py" goto :fail_core
 
 echo.
 echo [3/4] 写入 Studio 设置（不用手填路径）...
 set "PYTHONPATH=%ROOT%\src"
 %PY% -m face_swap_studio.core.studio_settings --deeplivecam-root "%DLC_DIR%"
-if errorlevel 1 (
-  echo [错误] 写入设置失败。
-  pause
-  exit /b 1
-)
+if errorlevel 1 goto :fail_settings
 
 echo.
 echo [4/4] 创建桌面快捷方式「打开换脸」...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0create-desktop-shortcut.ps1" -WorkingDirectory "%ROOT%"
-if errorlevel 1 (
-  echo [错误] 创建桌面快捷方式失败。
-  pause
-  exit /b 1
-)
+if errorlevel 1 goto :fail_shortcut
 
 echo.
 echo === 完成 ===
@@ -118,4 +87,43 @@ echo 打开后点「设置」，Deep-Live-Cam 目录应已经填好。
 echo 本脚本只完成安装和配置，不验证摄像头换脸。
 echo.
 pause
-endlocal
+exit /b 0
+
+:fail_nopy
+echo [错误] 未找到 python 或 py。请安装 Python 3.11、3.12 或 3.13，并勾选 Add to PATH。
+echo https://www.python.org/downloads/
+goto :fail
+
+:fail_ver
+echo [错误] 需要 Python 3.11 或更高版本。
+goto :fail
+
+:fail_studio
+echo [错误] FaceSwap Studio 安装失败。
+goto :fail
+
+:fail_dlc
+echo [错误] Deep-Live-Cam 安装失败。
+goto :fail
+
+:fail_runpy
+echo [错误] 安装后仍未找到 %DLC_DIR%\run.py
+goto :fail
+
+:fail_core
+echo [错误] 安装后仍未找到 %DLC_DIR%\modules\core.py
+goto :fail
+
+:fail_settings
+echo [错误] 写入设置失败。
+goto :fail
+
+:fail_shortcut
+echo [错误] 创建桌面快捷方式失败。上面是 PowerShell 的报错。
+goto :fail
+
+:fail
+echo.
+echo 窗口会停住，方便查看上面的错误。按任意键关闭。
+pause
+exit /b 1

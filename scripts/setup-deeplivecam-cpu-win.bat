@@ -22,8 +22,7 @@ if errorlevel 1 (
   where python >nul 2>&1
   if errorlevel 1 (
     echo [错误] 未找到 py / python。请先安装 Python 3.11+ 并勾选 Add to PATH。
-    call :maybe_pause
-    exit /b 1
+    goto :fail
   )
   set "PY=python"
 ) else (
@@ -68,8 +67,7 @@ if "%USE_ZIP%"=="1" (
   powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://github.com/hacksider/Deep-Live-Cam/archive/refs/heads/main.zip' -OutFile $env:ZIP"
   if errorlevel 1 (
     echo [错误] 下载失败，请手动从 GitHub 下 ZIP 解压到 %DLC_DIR%
-    call :maybe_pause
-    exit /b 1
+    goto :fail
   )
   powershell -NoProfile -Command "Expand-Archive -Force $env:ZIP (Join-Path $env:TEMP 'dlc-extract')"
   if exist "%TEMP%\dlc-extract\Deep-Live-Cam-main" (
@@ -80,8 +78,7 @@ if "%USE_ZIP%"=="1" (
 
 if not exist "%DLC_DIR%\run.py" (
   echo [错误] 未找到 %DLC_DIR%\run.py
-  call :maybe_pause
-  exit /b 1
+  goto :fail
 )
 
 :venv
@@ -91,8 +88,7 @@ if not exist "venv\Scripts\python.exe" (
   %PY% -m venv venv
   if errorlevel 1 (
     echo [错误] 创建 venv 失败
-    call :maybe_pause
-    exit /b 1
+    goto :fail
   )
 )
 
@@ -101,16 +97,14 @@ echo [3/5] 升级 pip，并安装预编译 insightface（不从源码编译）..
 python -m pip install -U pip
 if errorlevel 1 (
   echo [错误] 升级 pip 失败
-  call :maybe_pause
-  exit /b 1
+  goto :fail
 )
 
 set "PY_MINOR="
 for /f %%v in ('python -c "import sys; print(sys.version_info.minor)"') do set "PY_MINOR=%%v"
 if not defined PY_MINOR (
   echo [错误] 无法检测 venv 里的 Python 版本。已停止，不会从源码编译 insightface。
-  call :maybe_pause
-  exit /b 1
+  goto :fail
 )
 echo 检测到 Python 3.%PY_MINOR%
 
@@ -122,8 +116,7 @@ if not defined IF_TAG (
   echo [错误] Python 3.%PY_MINOR% 没有对应的预编译 insightface 轮子（仅 3.11 / 3.12 / 3.13）。
   echo        请改用 Python 3.11 或 3.12，或安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
   echo        本脚本不会从源码编译 insightface。
-  call :maybe_pause
-  exit /b 1
+  goto :fail
 )
 
 set "IF_WHL=insightface-0.7.3-%IF_TAG%-win_amd64.whl"
@@ -135,8 +128,7 @@ if errorlevel 1 (
   echo [错误] 预编译 insightface 下载失败（Python 3.%PY_MINOR%：%IF_WHL%）。
   echo        请安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
   echo        本脚本不会从源码编译 insightface，已停止安装。
-  call :maybe_pause
-  exit /b 1
+  goto :fail
 )
 
 python -m pip install "%IF_PATH%" -i %MIRROR%
@@ -144,8 +136,7 @@ if errorlevel 1 (
   echo [错误] 预编译 insightface 安装失败（Python 3.%PY_MINOR%）。
   echo        请安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
   echo        本脚本不会从源码编译 insightface，已停止安装。
-  call :maybe_pause
-  exit /b 1
+  goto :fail
 )
 
 echo [4/5] pip install -r requirements.txt （清华源）...
@@ -153,28 +144,28 @@ python -m pip install -r requirements.txt -i %MIRROR% --only-binary insightface
 if errorlevel 1 (
   echo [错误] pip 安装失败，可重跑本脚本或把报错发群。
   echo        insightface 只使用上面的预编译轮；若仍失败，请安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
-  call :maybe_pause
-  exit /b 1
+  goto :fail
 )
 
 echo [5/5] 下载模型到 models\ ...
 if not exist "models" mkdir models
 powershell -NoProfile -Command ^
-  "$m='models';" ^
+  "$ErrorActionPreference='Stop'; $m='models';" ^
   "$files=@(" ^
   " @{n='inswapper_128_fp16.onnx';u='https://huggingface.co/hacksider/deep-live-cam/resolve/main/inswapper_128_fp16.onnx'}," ^
   " @{n='gfpgan-1024.onnx';u='https://huggingface.co/hacksider/deep-live-cam/resolve/main/gfpgan-1024.onnx'}" ^
   ");" ^
   "foreach($f in $files){ $p=Join-Path $m $f.n; if(-not (Test-Path $p)){ Write-Host ('下载 '+$f.n); Invoke-WebRequest -Uri $f.u -OutFile $p } else { Write-Host ('已有 '+$f.n) } }"
+if errorlevel 1 (
+  echo [错误] 模型下载失败。可重跑本脚本，或检查网络后把报错发群。
+  goto :fail
+)
 
 echo.
 echo === 完成 ===
 echo Deep-Live-Cam 目录:
 echo   %DLC_DIR%
-if /I "%FSS_DLC_NOPAUSE%"=="1" (
-  echo [OK] Deep-Live-Cam 已就绪，交给一键安装继续写设置。
-  exit /b 0
-)
+if /I "%FSS_DLC_NOPAUSE%"=="1" goto :nested_ok
 echo.
 echo 下一步:
 echo 1^) 若没有 ffmpeg: winget install ffmpeg ，然后新开终端
@@ -182,10 +173,16 @@ echo 2^) 可先试跑:   cd /d "%DLC_DIR%" ^&^& venv\Scripts\activate ^&^& pytho
 echo 3^) 不必手填路径：双击 scripts\setup-all-win.bat ，会写入设置并在桌面创建「打开换脸」
 echo 4^) 本机无独显，换脸会很慢，先验证能开窗/出首帧即可
 echo.
-call :maybe_pause
-exit /b 0
-
-:maybe_pause
-if /I "%FSS_DLC_NOPAUSE%"=="1" exit /b 0
 pause
 exit /b 0
+
+:nested_ok
+echo [OK] Deep-Live-Cam 已就绪，交给一键安装继续写设置。
+exit /b 0
+
+:fail
+if /I "%FSS_DLC_NOPAUSE%"=="1" exit /b 1
+echo.
+echo 窗口会停住，方便查看上面的错误。按任意键关闭。
+pause
+exit /b 1
