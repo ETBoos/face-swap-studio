@@ -81,6 +81,8 @@ scripts\start-win.bat
 uv run python -m face_swap_studio
 ```
 
+即用引擎本身不在本仓库里。无独显、只想先把上游 Deep-Live-Cam 装上时，双击或在 cmd 里运行 `scripts\setup-deeplivecam-cpu-win.bat`：CPU 安装、清华 pip 源、下载模型，装到 `%USERPROFILE%\Deep-Live-Cam`。完成后在设置里把 `deeplivecam_root` 填成该目录。
+
 ### 开发者（Linux / macOS 盒上调试壳）
 
 ```bash

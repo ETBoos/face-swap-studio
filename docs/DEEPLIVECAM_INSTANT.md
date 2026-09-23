@@ -14,6 +14,8 @@
 
 像 DLC 目录的条件：存在 `run.py` **并且**存在 `modules/core.py`。
 
+Windows 上可以双击或运行 `scripts\setup-deeplivecam-cpu-win.bat` 做 CPU 一键安装（清华 pip 源、下载模型，装到 `%USERPROFILE%\Deep-Live-Cam`）。装完后把 `deeplivecam_root` 设成该目录。
+
 解释器（不要用本壳的 Python）：
 
 1. `deeplivecam_python`（填了但文件不存在则失败）
