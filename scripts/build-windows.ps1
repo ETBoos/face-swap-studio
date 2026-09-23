@@ -77,6 +77,7 @@ try {
     New-Item -ItemType Directory -Force -Path $ComponentsDir | Out-Null
     Copy-Item (Join-Path $ArtifactsDir "FaceSwapStudio-Camera-Setup.exe") $ComponentsDir
     Copy-Item "packaging\README-WINDOWS.txt" $BundleDir
+    Copy-Item "docs\INSTALLATION_GUIDE.md" (Join-Path $BundleDir "安装配置教学.md")
     Copy-Item (Join-Path $MetadataDir "THIRD-PARTY-NOTICES") $BundleDir -Recurse -Force
     Copy-Item (Join-Path $MetadataDir "build-info.json") $BundleDir
     Copy-Item (Join-Path $MetadataDir "activation.json") $BundleDir

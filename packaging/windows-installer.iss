@@ -46,6 +46,7 @@ Source: "{#BundleDir}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs 
 
 [Icons]
 Name: "{group}\FaceSwap Studio"; Filename: "{app}\FaceSwapStudio.exe"; WorkingDir: "{app}"
+Name: "{group}\安装配置教学"; Filename: "{sys}\notepad.exe"; Parameters: """{app}\安装配置教学.md"""
 Name: "{group}\卸载 FaceSwap Studio"; Filename: "{uninstallexe}"
 Name: "{group}\安装虚拟摄像头组件（需要管理员权限）"; Filename: "{app}\components\FaceSwapStudio-Camera-Setup.exe"
 Name: "{autodesktop}\FaceSwap Studio"; Filename: "{app}\FaceSwapStudio.exe"; WorkingDir: "{app}"; Tasks: desktopicon

@@ -3,6 +3,7 @@ FaceSwap Studio — Windows preview build
 安装版：运行 *-setup.exe。安装仅针对当前用户，不要求管理员权限。
 便携版：完整解压 ZIP，然后双击 FaceSwapStudio.exe。不要单独移动 exe。
 两种版本均包含 Python 和界面运行库，无需用户安装 Python。
+完整安装与配置步骤见同目录的 安装配置教学.md；安装版也可从开始菜单打开。
 
 这是用于验证安装、设备检测和操作流程的 alpha 版本。
 Windows + NVIDIA 的真实换脸画质、帧率、延迟及通话兼容性需要真机验收。

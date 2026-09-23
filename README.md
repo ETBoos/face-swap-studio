@@ -11,6 +11,7 @@
 - `FaceSwapStudio-0.2.0a1-windows-x64-setup.exe`：主程序，按当前用户安装，无需自行安装 Python。
 - `FaceSwapStudio-0.2.0a1-windows-x64-portable.zip`：便携版，完整解压后运行。
 - `FaceSwapStudio-Camera-Setup.exe`：独立虚拟摄像头组件，安装时需要 Windows 管理员权限。主程序开始菜单也提供该组件的安装入口。
+- `安装配置教学.md`：随主程序安装，并在开始菜单提供入口，包含 FaceFusion、授权、虚拟摄像头和 OBS 配置步骤。
 - `SHA256SUMS.txt` / `build-info.json`：文件校验与构建信息。
 
 按主界面四步操作：
@@ -38,7 +39,7 @@
 
 ## 下一步验收
 
-当前产品方向和验收顺序见 [产品方向与交付标准](docs/PRODUCT_DIRECTION.md)。照片引擎的准备、支持范围和测试限制见 [FaceFusion 适配说明](docs/FACEFUSION_ADAPTER.md)。构建方式见 [Windows 构建说明](docs/WINDOWS_BUILD.md)，授权后台的发行与 Railway 部署见 [密钥激活与 Railway 后台](docs/LICENSING.md)。
+普通用户请从 [安装与配置教学](docs/INSTALLATION_GUIDE.md) 开始。当前产品方向和验收顺序见 [产品方向与交付标准](docs/PRODUCT_DIRECTION.md)。照片引擎的准备、支持范围和测试限制见 [FaceFusion 适配说明](docs/FACEFUSION_ADAPTER.md)。构建方式见 [Windows 构建说明](docs/WINDOWS_BUILD.md)，授权后台的发行与 Railway 部署见 [密钥激活与 Railway 后台](docs/LICENSING.md)。
 
 先完成安装与输出闭环，再在同一台 Windows＋NVIDIA 机器上测真实模型：说话、侧脸、眨眼、手部遮挡、眼镜、暗光、快速运动，以及长时间运行。对外兼容列表以双端实测记录为准。旧文档中「剧组限定」「顶级必然更真实」「虚拟摄像头以后再做」等描述由本文件和新产品方向取代；原三档价格仍是历史方案，未在此轮重新定价。
 

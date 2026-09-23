@@ -34,15 +34,20 @@ try {
     )
     $InstalledExe = Join-Path $InstallDir "FaceSwapStudio.exe"
     if (-not (Test-Path $InstalledExe)) { throw "Installer did not install the executable." }
+    $InstalledGuide = Join-Path $InstallDir "安装配置教学.md"
+    if (-not (Test-Path $InstalledGuide)) { throw "Installer did not install the configuration guide." }
     & $PythonExe "scripts\smoke-windows-package.py" $InstalledExe --report "$ReportsDir\installed-smoke.json" --data-dir (Split-Path $DataMarker)
     if ($LASTEXITCODE -ne 0) { throw "Installed application smoke test failed." }
     $StartShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "FaceSwap Studio\FaceSwap Studio.lnk"
     if (-not (Test-Path $StartShortcut)) { throw "Start menu shortcut was not created." }
+    $GuideShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "FaceSwap Studio\安装配置教学.lnk"
+    if (-not (Test-Path $GuideShortcut)) { throw "Configuration guide shortcut was not created." }
     Invoke-InstallerProcess (Join-Path $InstallDir "unins000.exe") @(
         "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/LOG=`"$ReportsDir\uninstall.log`""
     )
     if (Test-Path $InstalledExe) { throw "Uninstaller left the application executable." }
     if (Test-Path $StartShortcut) { throw "Uninstaller left the start menu shortcut." }
+    if (Test-Path $GuideShortcut) { throw "Uninstaller left the configuration guide shortcut." }
     if (-not (Test-Path $DataMarker)) { throw "Uninstaller removed external user data." }
     @{ passed = $true; install = $true; launch = $true; uninstall = $true; retained_external_data = $true } |
         ConvertTo-Json | Set-Content "$ReportsDir\installer-test.json" -Encoding utf8
