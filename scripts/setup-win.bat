@@ -12,25 +12,41 @@ echo  剧组换脸预览工作站 — 产品壳 + 引擎适配桩
 echo ============================================
 echo.
 
+REM Interpreter order: python, then py -3, then py (Python Launcher).
+set "PY="
+
 where python >nul 2>&1
-if errorlevel 1 (
-  echo [错误] 未找到 python。请先安装 Python 3.11+ 并勾选 Add to PATH。
+if not errorlevel 1 set "PY=python"
+
+if not defined PY (
+  where py >nul 2>&1
+  if not errorlevel 1 (
+    py -3 -c "import sys" >nul 2>&1
+    if not errorlevel 1 set "PY=py -3"
+    if not defined PY set "PY=py"
+  )
+)
+
+if not defined PY (
+  echo [错误] 未找到 python 或 py。请安装 Python 3.11 或更高版本，或将其加入 PATH。
+  echo [Error] Neither python nor py was found. Install Python 3.11+ or fix PATH.
   echo https://www.python.org/downloads/
   exit /b 1
 )
 
-python -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"
+%PY% -c "import sys; raise SystemExit(0 if sys.version_info >= (3,11) else 1)"
 if errorlevel 1 (
   echo [错误] 需要 Python 3.11 或更高版本。
+  echo [Error] Python 3.11 or newer is required.
   exit /b 1
 )
 
 where uv >nul 2>&1
 if errorlevel 1 (
   echo [信息] 未检测到 uv，正在通过 pip 安装 uv...
-  python -m pip install --upgrade uv
+  %PY% -m pip install --upgrade uv
   if errorlevel 1 (
-    echo [错误] uv 安装失败。也可手动: pip install uv
+    echo [错误] uv 安装失败。也可手动: %PY% -m pip install uv
     exit /b 1
   )
 )
