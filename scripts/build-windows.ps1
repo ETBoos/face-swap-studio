@@ -79,6 +79,7 @@ try {
     Copy-Item "packaging\README-WINDOWS.txt" $BundleDir
     Copy-Item (Join-Path $MetadataDir "THIRD-PARTY-NOTICES") $BundleDir -Recurse -Force
     Copy-Item (Join-Path $MetadataDir "build-info.json") $BundleDir
+    Copy-Item (Join-Path $MetadataDir "activation.json") $BundleDir
     $UnexpectedModels = @(Get-ChildItem $BundleDir -Recurse -File | Where-Object {
         $_.Extension -in @(".onnx", ".dfm", ".pth", ".pt", ".safetensors")
     })

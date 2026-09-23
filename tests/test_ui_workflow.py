@@ -134,6 +134,14 @@ def scene(qapp, tmp_path):
         output_factory=output_factory,
         clock=lambda: now[0],
     )
+    # Most workflow checks exercise a valid Starter entitlement. Dedicated
+    # tests below verify the unactivated trial restrictions.
+    window.license.state.active = True
+    window.license.state.signed_token = "test-signed-entitlement"
+    window.license.state.expires_at = "2999-01-01T00:00:00+00:00"
+    window.license.state.token_expires_at = "2999-01-01T00:00:00+00:00"
+    window.license.state.features = ["photo_preview", "virtual_output"]
+    window._sync_license_ui()
     photo = tmp_path / "face.png"
     cv2.imencode(".png", np.ones((64, 64, 3), dtype=np.uint8) * 100)[1].tofile(photo)
     yield window, engines, outputs, now, photo
@@ -158,6 +166,21 @@ def test_default_mode_is_consistent_and_no_engine_or_camera_opens(scene, monkeyp
     assert w.settings["engine"] == "facefusion"
     assert w.session_state == "idle"
     assert not w.btn_output_start.isEnabled()
+
+
+def test_unactivated_trial_forces_watermark_and_blocks_output(scene):
+    w, eng = begin(scene)
+    w.license.deactivate_local()
+    w._sync_license_ui()
+    assert w.watermark_box.isChecked()
+    assert not w.watermark_box.isEnabled()
+    eng.push(frame_id=1)
+    w._on_tick()
+    assert w.session_state == "previewing"
+    assert not w.btn_output_start.isEnabled()
+    w._start_output()
+    assert w.output is None
+    assert "激活" in w.notice_label.text()
 
 
 def test_photo_without_project_and_settings_survive_restart(scene, qapp):

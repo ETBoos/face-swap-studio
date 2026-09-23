@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import platform
 import shutil
 import subprocess
@@ -130,6 +131,13 @@ def prepare(output: Path) -> None:
         json.dumps(info, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     (output / "version.txt").write_text(version, encoding="utf-8")
+    activation = {
+        "activation_url": os.environ.get("FSS_ACTIVATION_URL", "").strip().rstrip("/"),
+        "license_public_key": os.environ.get("FSS_LICENSE_PUBLIC_KEY", "").strip(),
+    }
+    (output / "activation.json").write_text(
+        json.dumps(activation, ensure_ascii=False, indent=2) + "\n", encoding="utf-8"
+    )
 
 
 if __name__ == "__main__":

@@ -42,6 +42,7 @@ from face_swap_studio.engines.config_builder import build_engine_config
 from face_swap_studio.engines.deepfacelive_stub import create_engine
 from face_swap_studio.engines.lifecycle import shutdown_engine
 from face_swap_studio.licensing.store import LicenseStore
+from face_swap_studio.ui.activation_dialog import ActivationDialog
 from face_swap_studio.ui.settings_dialog import DIALOG_KEYS, SettingsDialog
 
 
@@ -128,6 +129,7 @@ class MainWindow(QMainWindow):
         self._timer.setInterval(33)
         self._timer.timeout.connect(self._on_tick)
         self._build_ui()
+        self._sync_license_ui()
         self._refresh_project_list()
         self._sync_mode_widgets()
         self._sync_camera_choice()
@@ -136,15 +138,28 @@ class MainWindow(QMainWindow):
         if self.preferences.last_error:
             self._notice("上次设置无法读取，已使用默认值。可以重新选择设备和素材。")
             self.log.record("preferences_load_error", error=self.preferences.last_error)
+        elif self.license.last_error:
+            self._notice(self.license.last_error)
         self.log.record("app_start", version=__version__)
 
     def _build_ui(self):
         central = QWidget()
         self.setCentralWidget(central)
         outer = QVBoxLayout(central)
+        title_row = QHBoxLayout()
         title = QLabel("FaceSwap Studio")
         title.setStyleSheet("font-size:26px;font-weight:600;padding:8px 0;")
-        outer.addWidget(title)
+        title_row.addWidget(title)
+        title_row.addStretch()
+        self.license_label = QLabel()
+        self.license_label.setStyleSheet(
+            "background:#e8eef6;border-radius:6px;padding:6px 10px;color:#334e70;"
+        )
+        title_row.addWidget(self.license_label)
+        self.btn_activation = QPushButton("激活 / 授权")
+        self.btn_activation.clicked.connect(self._show_activation)
+        title_row.addWidget(self.btn_activation)
+        outer.addLayout(title_row)
         subtitle = QLabel("实时通话与直播  ·  先确认本机画面，再开始输出")
         subtitle.setStyleSheet("color:#657185;padding-bottom:8px;")
         outer.addWidget(subtitle)
@@ -170,14 +185,14 @@ class MainWindow(QMainWindow):
         source_layout = QVBoxLayout(source_box)
         self.mode_combo = QComboBox()
         self.mode_combo.addItem("照片模式", "simple")
-        self.mode_combo.addItem("专属模型（.dfm / 外部窗口）", "pro")
-        self.mode_combo.addItem("摄像头演示（不换脸 / 不可输出）", "demo")
+        self.mode_combo.addItem("专业人物模型", "pro")
+        self.mode_combo.addItem("设备测试（不换脸）", "demo")
         self.mode_combo.setCurrentIndex(self.mode_combo.findData(self.settings["work_mode"]))
         self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
         source_layout.addWidget(self.mode_combo)
         self.btn_import = QPushButton("选择照片…")
         self.btn_import.clicked.connect(self._import_asset)
-        self.btn_dfm = QPushButton("选择 .dfm…")
+        self.btn_dfm = QPushButton("导入专业人物模型…")
         self.btn_dfm.clicked.connect(self._choose_dfm)
         source_layout.addWidget(self.btn_import)
         source_layout.addWidget(self.btn_dfm)
@@ -325,7 +340,14 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(self._previewing)
         ready = self._real_frame_ready()
         output_state = _value(self.output.status()) if self.output else "stopped"
-        self.btn_output_start.setEnabled(ready and output_state not in ("running", "starting"))
+        self.btn_output_start.setEnabled(
+            ready
+            and self.license.state.allows_output()
+            and output_state not in ("running", "starting")
+        )
+        self.btn_output_start.setToolTip(
+            "" if self.license.state.allows_output() else "激活产品密钥后可输出到视频通话或直播软件"
+        )
         self.btn_output_pause.setEnabled(output_state in ("running", "starting"))
         self.btn_export.setEnabled(self._last_frame is not None and self._previewing)
 
@@ -340,10 +362,32 @@ class MainWindow(QMainWindow):
         self.mode_hint.setText(
             {
                 "simple": "默认 720p，最高 1080p。需要兼容的 FaceFusion 环境与已获许可模型；缺少依赖时会提示具体原因。",
-                "pro": "此版本在 DeepFaceLive 外部窗口运行；本程序尚不能接收其画面或开始输出。需要已激活的 Pro / Studio 授权。",
+                "pro": "适合反复使用的固定人物。当前通过专业模型窗口运行，需要 Pro / Studio 授权。",
                 "demo": "仅检查摄像头和界面，不进行换脸，不允许开始输出。",
             }[mode]
         )
+
+    def _sync_license_ui(self):
+        self.license_label.setText(self.license.status_text())
+        can_remove = self.license.state.allows_watermark_removal()
+        self.watermark_box.blockSignals(True)
+        if not can_remove:
+            self.watermark_box.setChecked(True)
+        else:
+            self.watermark_box.setChecked(bool(self.settings["watermark_enabled"]))
+        self.watermark_box.setEnabled(can_remove)
+        self.watermark_box.setToolTip(
+            "" if can_remove else "体验模式和 Starter 授权会保留预览标记"
+        )
+        self._sync_mode_widgets()
+        self._update_buttons()
+
+    def _show_activation(self):
+        dialog = ActivationDialog(self.license, self)
+        dialog.exec()
+        self._sync_license_ui()
+        if self.license.state.is_valid():
+            self._notice("授权已验证，可以使用已开通的功能。")
 
     def _on_mode_changed(self, _index=0):
         mode = self.mode_combo.currentData()
@@ -564,12 +608,14 @@ class MainWindow(QMainWindow):
         self.preview_label.setText("正在准备，请稍候…\n尚未开始输出")
         self._set_state("starting", "正在检查环境并启动引擎；成功出画前不会开始输出。")
         self._timer.start()
+        show_watermark = (
+            not self.license.state.allows_watermark_removal()
+            or self.watermark_box.isChecked()
+        )
         cfg = build_engine_config(
             self.settings,
             source_face_paths=self._asset_paths(),
-            watermark_text="FaceSwap Studio · Preview"
-            if self.watermark_box.isChecked()
-            else None,
+            watermark_text="FaceSwap Studio · Preview" if show_watermark else None,
         )
         try:
             engine = self._factory(self.settings["engine"])
@@ -772,6 +818,9 @@ class MainWindow(QMainWindow):
         )
 
     def _start_output(self):
+        if not self.license.state.allows_output():
+            self._notice("体验模式可检查带标记的本机预览；激活产品密钥后才能开始视频输出。")
+            return
         if not self._real_frame_ready():
             self._notice("先取得真实换脸预览并确认画面，再开始输出。")
             return

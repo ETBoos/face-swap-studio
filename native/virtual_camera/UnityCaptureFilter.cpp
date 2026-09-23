@@ -753,6 +753,7 @@ private:
 		if (pmt == NULL) DebugLog("[SetFormat] E_POINTER\n");
 		if (pmt == NULL) return E_POINTER;
 
+		if (pmt->formattype != FORMAT_VideoInfo || pmt->cbFormat < sizeof(VIDEOINFOHEADER)) return E_INVALIDARG;
 		VIDEOINFO* pvi = (VIDEOINFO*)pmt->pbFormat;
 		if (pvi == NULL) DebugLog("[SetFormat] E_UNEXPECTED (pvi is null)\n");
 		if (pvi == NULL) return E_UNEXPECTED;
@@ -765,7 +766,9 @@ private:
 			(int)pvi->bmiHeader.biSizeImage, (int)DIBSIZE(pvi->bmiHeader));
 		m_avgTimePerFrame = pvi->AvgTimePerFrame;
 		m_mt = *pmt;
-		((VIDEOINFO*)m_mt.pbFormat)->bmiHeader.biSizeImage = DIBSIZE(((VIDEOINFO*)m_mt.pbFormat)->bmiHeader);
+		DWORD imageSize = DIBSIZE(((VIDEOINFO*)m_mt.pbFormat)->bmiHeader);
+		((VIDEOINFO*)m_mt.pbFormat)->bmiHeader.biSizeImage = imageSize;
+		m_mt.lSampleSize = imageSize;
 		return S_OK;
 	}
 
@@ -845,12 +848,26 @@ private:
 	HRESULT CheckMediaType(const CMediaType *pMediaType) override
 	{
 		CAutoLock lock(m_pFilter->pStateLock());
+		if (pMediaType == NULL) return E_POINTER;
+		if (pMediaType->majortype != MEDIATYPE_Video ||
+			pMediaType->formattype != FORMAT_VideoInfo ||
+			pMediaType->cbFormat < sizeof(VIDEOINFOHEADER) ||
+			pMediaType->Format() == NULL || m_mt.Format() == NULL)
+			return E_INVALIDARG;
 		VIDEOINFOHEADER *pvi = (VIDEOINFOHEADER *)(pMediaType->Format());
+		VIDEOINFOHEADER *have = (VIDEOINFOHEADER *)(m_mt.Format());
 		if (!pvi) DebugLog("[CheckMediaType] WANT VIDEO INFO NULL\n");
 		else DebugLog("[CheckMediaType] [WANT] WIDTH: %d - HEIGHT: %d - BITS: %d - TPS: %d - SIZEIMAGE: %d - SIZECALC: %d - CBFORMAT: %d\n", (int)pvi->bmiHeader.biWidth, (int)pvi->bmiHeader.biHeight, (int)pvi->bmiHeader.biBitCount, (int)pvi->AvgTimePerFrame, (int)pvi->bmiHeader.biSizeImage, (int)DIBSIZE(pvi->bmiHeader), (int)pMediaType->cbFormat);
 		     DebugLog("[CheckMediaType] [HAVE] WIDTH: %d - HEIGHT: %d - BITS: %d - TPS: %d - SIZEIMAGE: %d - SIZECALC: %d - CBFORMAT: %d\n", (int)((VIDEOINFO*)m_mt.Format())->bmiHeader.biWidth, (int)((VIDEOINFO*)m_mt.Format())->bmiHeader.biHeight, (int)((VIDEOINFO*)m_mt.Format())->bmiHeader.biBitCount, (int)((VIDEOINFO*)m_mt.Format())->AvgTimePerFrame, (int)((VIDEOINFO*)m_mt.Format())->bmiHeader.biSizeImage, (int)DIBSIZE(((VIDEOINFO*)m_mt.Format())->bmiHeader), (int)m_mt.cbFormat);
-		     DebugLog("[CheckMediaType] [RETURNING] %s\n", (*pMediaType != m_mt ? "E_INVALIDARG" : "S_OK"));
-		return (*pMediaType != m_mt ? E_INVALIDARG : S_OK);
+		bool compatible =
+			pMediaType->subtype == m_mt.subtype &&
+			pvi->bmiHeader.biWidth == have->bmiHeader.biWidth &&
+			pvi->bmiHeader.biHeight == have->bmiHeader.biHeight &&
+			pvi->bmiHeader.biPlanes == have->bmiHeader.biPlanes &&
+			pvi->bmiHeader.biBitCount == have->bmiHeader.biBitCount &&
+			pvi->bmiHeader.biCompression == BI_RGB;
+		DebugLog("[CheckMediaType] [RETURNING] %s\n", (compatible ? "S_OK" : "E_INVALIDARG"));
+		return (compatible ? S_OK : E_INVALIDARG);
 	}
 
 	HRESULT GetMediaType(int iPos, CMediaType *pMediaType) override

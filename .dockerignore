@@ -1,0 +1,12 @@
+.git
+.github
+.venv
+build
+dist
+tests
+docs
+native
+packaging
+*.pyc
+.secrets
+activation.local.json

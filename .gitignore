@@ -5,6 +5,9 @@ __pycache__/
 .venv/
 venv/
 .env
+activation.local.json
+.secrets/
+*.license
 *.egg-info/
 dist/
 build/
