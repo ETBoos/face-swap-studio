@@ -182,6 +182,15 @@ def write_deeplivecam_root(root: str, path: Path | None = None) -> Path:
     return save_settings(settings, file)
 
 
+def find_cpu_setup_script() -> Path | None:
+    """``setup-deeplivecam-cpu-win.bat`` beside the one-click installer."""
+    setup_all = find_setup_all_script()
+    if setup_all is None:
+        return None
+    cpu = setup_all.with_name("setup-deeplivecam-cpu-win.bat")
+    return cpu.resolve() if cpu.is_file() else None
+
+
 def find_setup_all_script() -> Path | None:
     """Locate ``scripts/setup-all-win.bat`` from a source checkout or cwd."""
     candidates: list[Path] = []

@@ -14,7 +14,9 @@
 
 像 DLC 目录的条件：存在 `run.py` **并且**存在 `modules/core.py`。
 
-Windows 上双击一次 `scripts\setup-all-win.bat`：若 `%USERPROFILE%\Deep-Live-Cam` 还不存在，就调用 `scripts\setup-deeplivecam-cpu-win.bat`（CPU、预编译 insightface、清华 pip 源、模型）。然后把 `deeplivecam_root` 写入 `%USERPROFILE%\FaceSwapStudio\settings.json`，并在桌面创建「打开换脸」（启动 `scripts\start-win.bat`）。之后用这个快捷方式打开，不用手填路径。壳在启动和即用预览时，若 `deeplivecam_root` 仍为空，会再探测该用户目录、`DEEP_LIVE_CAM_ROOT` / `DLC_ROOT` 以及常见盘符路径，找到就写回设置。仍没有时，开始预览会提示一键安装，而不是只报「未找到 Deep-Live-Cam」。专模 DeepFaceLive、激活码和 USDT 不走这条安装。
+Windows 上双击一次 `scripts\setup-all-win.bat`：若 `%USERPROFILE%\Deep-Live-Cam` 还不存在，就调用 `scripts\setup-deeplivecam-cpu-win.bat`（CPU、预编译 insightface、清华 pip 源、模型）。然后把 `deeplivecam_root` 写入 `%USERPROFILE%\FaceSwapStudio\settings.json`，并在桌面创建「打开换脸」。快捷方式直接启动 `.venv\Scripts\pythonw.exe -m face_swap_studio`（`WindowStyle` 7），不挂黑色命令行窗口；关掉终端也不会关掉本程序。`scripts\start-win.bat` 同样用 `start` 拉起 `pythonw` 后自己退出。
+
+程序里的「环境监测」会检查 Python、Deep-Live-Cam 目录、虚拟环境、insightface、依赖（cv2 / onnxruntime）和 inswapper 模型。都齐了就写入路径，不重新下载。缺了就启动上面的 CPU 安装脚本，装完再写入路径。不用手填目录。壳在启动和即用预览时，若 `deeplivecam_root` 仍为空，也会再探测该用户目录、`DEEP_LIVE_CAM_ROOT` / `DLC_ROOT` 以及常见盘符路径。仍没有时，开始预览会提示一键安装，而不是只报「未找到 Deep-Live-Cam」。专模 DeepFaceLive、激活码和 USDT 不走这条安装。
 
 解释器（不要用本壳的 Python）：
 

@@ -1,12 +1,18 @@
 # ASCII-only so Windows PowerShell 5.1 does not mis-read UTF-8.
 # Shortcut display name: U+6253 U+5F00 U+6362 U+8138
+# Target is pythonw.exe so the GUI is not attached to a console.
+# Closing a terminal must not close Studio. WindowStyle 7 keeps the
+# shortcut from restoring a console window.
 param(
-    [Parameter(Mandatory = $true)][string]$TargetBat,
-    [Parameter(Mandatory = $true)][string]$WorkingDirectory
+    [Parameter(Mandatory = $true)][string]$WorkingDirectory,
+    [string]$Pythonw = ""
 )
 $ErrorActionPreference = 'Stop'
-if (-not (Test-Path -LiteralPath $TargetBat)) {
-    throw "launcher not found: $TargetBat"
+if ([string]::IsNullOrWhiteSpace($Pythonw)) {
+    $Pythonw = Join-Path $WorkingDirectory ".venv\Scripts\pythonw.exe"
+}
+if (-not (Test-Path -LiteralPath $Pythonw)) {
+    throw "pythonw.exe not found: $Pythonw"
 }
 $desktop = [Environment]::GetFolderPath('Desktop')
 if ([string]::IsNullOrWhiteSpace($desktop)) {
@@ -16,10 +22,10 @@ $name = -join @([char]0x6253, [char]0x5F00, [char]0x6362, [char]0x8138)
 $lnkPath = Join-Path $desktop ($name + '.lnk')
 $shell = New-Object -ComObject WScript.Shell
 $shortcut = $shell.CreateShortcut($lnkPath)
-$shortcut.TargetPath = Join-Path $env:SystemRoot 'System32\cmd.exe'
-$shortcut.Arguments = '/c ""' + $TargetBat + '""'
+$shortcut.TargetPath = $Pythonw
+$shortcut.Arguments = "-m face_swap_studio"
 $shortcut.WorkingDirectory = $WorkingDirectory
-$shortcut.WindowStyle = 1
-$shortcut.Description = 'FaceSwap Studio'
+$shortcut.WindowStyle = 7
+$shortcut.Description = "FaceSwap Studio"
 $shortcut.Save()
 Write-Output $lnkPath

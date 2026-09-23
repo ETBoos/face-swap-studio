@@ -65,14 +65,16 @@
 scripts\setup-all-win.bat
 ```
 
-这一下会检测 Python 和 `%USERPROFILE%\Deep-Live-Cam`。目录不存在时，用 `scripts\setup-deeplivecam-cpu-win.bat` 做 CPU 安装（预编译 insightface、清华 pip 源、模型）。装好后自动把 `deeplivecam_root` 写入 `%USERPROFILE%\FaceSwapStudio\settings.json`，并在桌面创建「打开换脸」。之后双击那个快捷方式即可，不用手填路径。打开后在「设置」里应能看到 Deep-Live-Cam 目录。本仓库没有在显卡或摄像头上验证换脸。
+这一下会检测 Python 和 `%USERPROFILE%\Deep-Live-Cam`。目录不存在时，用 `scripts\setup-deeplivecam-cpu-win.bat` 做 CPU 安装（预编译 insightface、清华 pip 源、模型）。装好后自动把 `deeplivecam_root` 写入 `%USERPROFILE%\FaceSwapStudio\settings.json`，并在桌面创建「打开换脸」。快捷方式启动 `pythonw`，没有黑色命令行窗口，关掉终端也不会关掉程序。
+
+打开后也可以点「环境监测」：缺的组件会走同一套 CPU 安装，已经有的不重新下载，路径自动写入。打开「设置」应能看到 Deep-Live-Cam 目录。本仓库没有在显卡或摄像头上验证换脸。
 
 开发者如果只装壳、不装 Deep-Live-Cam：
 
 1. 安装 [Python 3.11+](https://www.python.org/downloads/)（勾选 Add to PATH）。
 2. 将本项目解压到例如 `C:\FaceSwapStudio\face-swap-studio`。
 3. 双击或在 cmd 中运行 `scripts\setup-win.bat`（安装 `uv` 并执行 `uv sync`）。
-4. 启动：`scripts\start-win.bat`，或 `uv run python -m face_swap_studio`。
+4. 启动：`scripts\start-win.bat`（用 `pythonw` 脱离控制台），或在已有图形环境里 `uv run python -m face_swap_studio`。
 
 ### 开发者（Linux / macOS 盒上调试壳）
 

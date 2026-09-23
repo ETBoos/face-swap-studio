@@ -163,6 +163,14 @@ def test_setup_script_is_discoverable_and_windows_only() -> None:
     assert "0x5F00" in shortcut
     assert "0x6362" in shortcut
     assert "0x8138" in shortcut
+    assert "pythonw.exe" in shortcut
+    assert "WindowStyle = 7" in shortcut
+    assert "-m face_swap_studio" in shortcut
+    assert "cmd.exe" not in shortcut
+    launcher = (script.parent / "start-win.bat").read_text(encoding="utf-8")
+    assert "pythonw.exe" in launcher
+    assert 'start ""' in launcher
+    assert "uv run" not in launcher
     cpu = (script.parent / "setup-deeplivecam-cpu-win.bat").read_text(encoding="utf-8")
     assert "cp311-cp311" in cpu
     assert "cp312-cp312" in cpu
@@ -177,6 +185,7 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtWidgets import QApplication, QFileDialog, QMessageBox
 
+from face_swap_studio.core.env_check import EnvCheckItem, EnvReport
 from face_swap_studio.ui.main_window import MainWindow
 from face_swap_studio.ui.settings_dialog import DIALOG_KEYS, SettingsDialog
 
@@ -300,5 +309,64 @@ def test_detected_root_continues_to_source_face_prompt(
         assert window.settings["deeplivecam_root"] == str(root.resolve())
         assert any(len(args) > 1 and args[1] == "需要源脸" for args in notes)
         assert window._previewing is False
+    finally:
+        window.close()
+
+
+def test_env_button_writes_ready_path_and_skips_install(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_dlc_env(monkeypatch)
+    root = _dlc_root(tmp_path / "Deep-Live-Cam")
+    py = root / "venv" / "bin" / "python"
+    report = EnvReport(
+        items=(EnvCheckItem("python", "Python", True, "3.12"),),
+        deeplivecam_root=str(root.resolve()),
+        deeplivecam_python=str(py),
+    )
+    monkeypatch.setattr(
+        "face_swap_studio.ui.main_window.assess_instant_environment",
+        lambda settings: report,
+    )
+    window = MainWindow(projects_root=tmp_path / "projects")
+    try:
+        assert window.btn_env.text() == "环境监测"
+        calls: list[str] = []
+        window._run_cpu_setup_and_apply = lambda: calls.append("install")  # type: ignore[method-assign]
+        monkeypatch.setattr(QMessageBox, "information", lambda *args, **kwargs: None)
+        window.btn_env.click()
+        assert calls == []
+        assert window.settings["deeplivecam_root"] == str(root.resolve())
+        assert window.settings["deeplivecam_python"] == str(py)
+        saved = json.loads((tmp_path / "settings.json").read_text(encoding="utf-8"))
+        assert saved["deeplivecam_root"] == str(root.resolve())
+        assert saved.get("work_mode") == "simple"
+    finally:
+        window.close()
+
+
+def test_env_button_installs_when_insightface_missing(
+    qapp, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_dlc_env(monkeypatch)
+    report = EnvReport(
+        items=(EnvCheckItem("insightface", "insightface", False, "未安装"),),
+    )
+    monkeypatch.setattr(
+        "face_swap_studio.ui.main_window.assess_instant_environment",
+        lambda settings: report,
+    )
+    monkeypatch.setattr(
+        QMessageBox,
+        "question",
+        lambda *args, **kwargs: QMessageBox.StandardButton.Yes,
+    )
+    window = MainWindow(projects_root=tmp_path / "projects")
+    try:
+        calls: list[str] = []
+        window._run_cpu_setup_and_apply = lambda: calls.append("install")  # type: ignore[method-assign]
+        window.btn_env.click()
+        assert calls == ["install"]
+        assert window.settings.get("deeplivecam_root", "") == ""
     finally:
         window.close()

@@ -1,45 +1,38 @@
 @echo off
-REM FaceSwap Studio — Windows launcher
+REM FaceSwap Studio — Windows launcher.
+REM Starts pythonw.exe in a separate process and exits this console.
+REM pythonw has no console, so closing a terminal cannot close the GUI.
 chcp 65001 >nul
 setlocal EnableExtensions
 
 set "ROOT=%~dp0.."
 cd /d "%ROOT%"
+set "ROOT=%CD%"
 
-echo 启动 FaceSwap Studio ...
-echo 仅限授权影视用途 — AUTHORIZED FILM USE ONLY
-echo.
+set "PYW="
+if exist "%ROOT%\.venv\Scripts\pythonw.exe" set "PYW=%ROOT%\.venv\Scripts\pythonw.exe"
 
-where uv >nul 2>&1
-if errorlevel 1 (
-  if exist ".venv\Scripts\python.exe" (
-    ".venv\Scripts\python.exe" -m face_swap_studio
-    goto :eof
-  )
+if not defined PYW (
   where py >nul 2>&1
   if not errorlevel 1 (
-    py -3 -c "import sys" >nul 2>&1
-    if not errorlevel 1 (
-      py -3 -m face_swap_studio
-      goto :eof
-    )
+    for /f "usebackq delims=" %%I in (`py -3 -c "import pathlib,sys; p=pathlib.Path(sys.executable); w=p.with_name('pythonw.exe'); print(w if w.is_file() else '')"`) do set "PYW=%%I"
   )
+)
+
+if not defined PYW (
   where python >nul 2>&1
   if not errorlevel 1 (
-    python -m face_swap_studio
-    goto :eof
+    for /f "usebackq delims=" %%I in (`python -c "import pathlib,sys; p=pathlib.Path(sys.executable); w=p.with_name('pythonw.exe'); print(w if w.is_file() else '')"`) do set "PYW=%%I"
   )
-  echo [错误] 未找到 python 或 py。请安装 Python 3.11 或更高版本，或将其加入 PATH。
-  echo [Error] Neither python nor py was found. Install Python 3.11+ or fix PATH.
-  echo 请先运行 scripts\setup-win.bat
+)
+
+if not defined PYW (
+  echo [错误] 未找到 pythonw.exe。请先双击 scripts\setup-all-win.bat
+  echo [Error] pythonw.exe was not found. Run scripts\setup-all-win.bat first.
   pause
   exit /b 1
 )
 
-uv run python -m face_swap_studio
-if errorlevel 1 (
-  echo [错误] 启动失败。请先运行 scripts\setup-win.bat
-  pause
-  exit /b 1
-)
-endlocal
+REM Empty title is required so start treats the quoted exe as the program.
+start "" "%PYW%" -m face_swap_studio
+exit /b 0

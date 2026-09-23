@@ -9,10 +9,11 @@ from typing import Optional
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -20,6 +21,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QStatusBar,
@@ -29,14 +31,19 @@ from PySide6.QtWidgets import (
 
 from face_swap_studio import __version__
 from face_swap_studio.core.consent import BANNER_ZH, CONSENT_CHECKLIST_ZH
+from face_swap_studio.core.env_check import (
+    apply_ready_environment,
+    assess_instant_environment,
+)
 from face_swap_studio.core.project import ProjectMeta, ProjectStore
 from face_swap_studio.core.studio_settings import (
     DLC_SETUP_OFFER_NO_SCRIPT_ZH,
     DLC_SETUP_OFFER_ZH,
     ensure_deeplivecam_root,
+    find_cpu_setup_script,
     find_setup_all_script,
-    launch_setup_script,
     load_settings,
+    looks_like_deeplivecam_root,
     resolve_settings_path,
     save_settings,
 )
@@ -69,6 +76,59 @@ _LOCKED_PREVIEW_ZH = (
     "请点击「激活」输入 FS-1D（1 天）或 FS-30D（30 天）试用码。\n"
     "USDT 年费开通后也可预览。试用到期回到未激活，不会自动升级 Pro。"
 )
+
+
+class _CpuSetupDialog(QDialog):
+    """Run the existing CPU setup bat and show its log. Studio stays open."""
+
+    def __init__(self, script: Path, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("正在安装换脸组件")
+        self.resize(640, 420)
+        self._code = 1
+        note = QLabel(
+            "正在用现有的 CPU 安装补齐 Deep-Live-Cam、insightface 预编译轮和模型。"
+            "已经下载过的文件会跳过。这个窗口关掉也不会关掉主程序。"
+        )
+        note.setWordWrap(True)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.btn_close = QPushButton("关闭")
+        self.btn_close.setEnabled(False)
+        self.btn_close.clicked.connect(self.accept)
+        layout = QVBoxLayout(self)
+        layout.addWidget(note)
+        layout.addWidget(self.log, stretch=1)
+        layout.addWidget(self.btn_close)
+
+        self.proc = QProcess(self)
+        self.proc.setWorkingDirectory(str(script.resolve().parent))
+        self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("FSS_DLC_NOPAUSE", "1")
+        self.proc.setProcessEnvironment(env)
+        self.proc.readyRead.connect(self._append_log)
+        self.proc.finished.connect(self._finished)
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        self.proc.start(comspec, ["/d", "/c", str(script)])
+
+    def _append_log(self) -> None:
+        raw = bytes(self.proc.readAll())
+        text = raw.decode("utf-8", errors="replace")
+        if text:
+            self.log.appendPlainText(text.rstrip())
+
+    def _finished(self, code: int, _status) -> None:
+        self._append_log()
+        self._code = int(code)
+        self.btn_close.setEnabled(True)
+        self.log.appendPlainText(f"\n安装进程结束，退出码 {code}。")
+
+    @classmethod
+    def run(cls, parent, script: Path) -> int:
+        dlg = cls(script, parent)
+        dlg.exec()
+        return dlg._code
 
 
 class MainWindow(QMainWindow):
@@ -218,11 +278,14 @@ class MainWindow(QMainWindow):
         self.btn_activate.clicked.connect(self._prompt_activation)
         self.btn_settings = QPushButton("设置…")
         self.btn_settings.clicked.connect(self._open_settings)
+        self.btn_env = QPushButton("环境监测")
+        self.btn_env.clicked.connect(self._check_environment)
         actions.addWidget(self.btn_start)
         actions.addWidget(self.btn_stop)
         actions.addWidget(self.btn_export)
         actions.addWidget(self.btn_activate)
         actions.addWidget(self.btn_settings)
+        actions.addWidget(self.btn_env)
         right_l.addLayout(actions)
 
         self.engine_info = QLabel("引擎: Placeholder（stub）")
@@ -670,7 +733,7 @@ class MainWindow(QMainWindow):
         return bool(previous)
 
     def _offer_dlc_setup(self) -> None:
-        script = find_setup_all_script()
+        script = find_cpu_setup_script() or find_setup_all_script()
         if script is None:
             QMessageBox.information(self, "还不能换脸", DLC_SETUP_OFFER_NO_SCRIPT_ZH)
             return
@@ -683,16 +746,84 @@ class MainWindow(QMainWindow):
         box.exec()
         if box.clickedButton() is not install:
             return
-        try:
-            launch_setup_script(script)
-        except OSError as exc:
-            QMessageBox.warning(
+        self._run_cpu_setup_and_apply()
+
+    def _check_environment(self) -> None:
+        """One click: detect Instant deps, or install them, then store the path."""
+        report = assess_instant_environment(self.settings)
+        if report.ready:
+            self._apply_env_report(report)
+            QMessageBox.information(
                 self,
-                "未能打开安装",
-                f"{exc}\n\n请手动双击：\n{script}",
+                "环境监测",
+                "环境已就绪，已写入换脸路径。不用再填目录，也不会重新下载。\n\n"
+                + report.summary_zh(),
             )
             return
-        self.statusBar().showMessage("已打开一键安装。完成后双击桌面「打开换脸」。")
+        answer = QMessageBox.question(
+            self,
+            "环境监测",
+            "还缺组件。点「是」会用现有的 CPU 安装补上"
+            "（Deep-Live-Cam、insightface 预编译轮、依赖和模型）。"
+            "已经有的文件会跳过下载，装完自动写入路径。\n\n" + report.summary_zh(),
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._run_cpu_setup_and_apply()
+
+    def _apply_env_report(self, report) -> None:
+        if not apply_ready_environment(self.settings, report):
+            return
+        self._persist_settings()
+        self.log.record(
+            "env_check_ready",
+            deeplivecam_root=self.settings.get("deeplivecam_root", ""),
+        )
+        if self.license.allows_preview() and not self._previewing:
+            try:
+                mode = WorkMode(self.settings.get("work_mode", WorkMode.SIMPLE.value))
+            except ValueError:
+                mode = WorkMode.SIMPLE
+            if mode == WorkMode.SIMPLE:
+                self.preview_label.setText(self._instant_idle_text())
+        self.statusBar().showMessage(
+            f"换脸路径已写入：{self.settings.get('deeplivecam_root', '')}"
+        )
+
+    def _run_cpu_setup_and_apply(self) -> None:
+        script = find_cpu_setup_script()
+        if script is None:
+            QMessageBox.information(self, "环境监测", DLC_SETUP_OFFER_NO_SCRIPT_ZH)
+            return
+        if os.name != "nt":
+            QMessageBox.information(
+                self,
+                "环境监测",
+                "CPU 安装脚本只能在 Windows 上运行。\n" + str(script),
+            )
+            return
+        code = _CpuSetupDialog.run(self, script)
+        installed = Path.home() / "Deep-Live-Cam"
+        if looks_like_deeplivecam_root(installed):
+            self.settings["deeplivecam_root"] = str(installed.resolve())
+        elif str(self.settings.get("deeplivecam_root") or "").strip():
+            current = Path(str(self.settings.get("deeplivecam_root"))).expanduser()
+            if not looks_like_deeplivecam_root(current):
+                self.settings["deeplivecam_root"] = ""
+        report = assess_instant_environment(self.settings)
+        if report.ready:
+            self._apply_env_report(report)
+            QMessageBox.information(
+                self,
+                "环境监测",
+                "安装完成，换脸路径已写入。\n\n" + report.summary_zh(),
+            )
+            return
+        QMessageBox.warning(
+            self,
+            "环境监测",
+            f"安装结束（退出码 {code}），仍有缺项。\n\n" + report.summary_zh(),
+        )
 
     def _on_session_changed(self, _index: int = 0) -> None:
         data = self.session_combo.currentData()

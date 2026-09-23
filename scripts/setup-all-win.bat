@@ -99,7 +99,7 @@ if errorlevel 1 (
 
 echo.
 echo [4/4] 创建桌面快捷方式「打开换脸」...
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0create-desktop-shortcut.ps1" -TargetBat "%~dp0start-win.bat" -WorkingDirectory "%ROOT%"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0create-desktop-shortcut.ps1" -WorkingDirectory "%ROOT%"
 if errorlevel 1 (
   echo [错误] 创建桌面快捷方式失败。
   pause
