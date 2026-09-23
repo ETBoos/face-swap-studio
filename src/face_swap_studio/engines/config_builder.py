@@ -6,6 +6,28 @@ from typing import Any, Mapping, Optional
 
 from face_swap_studio.engines.base import EngineConfig
 
+# Instant-only keys. Pro / DeepFaceLive must not receive them, even when
+# the shell has auto-filled deeplivecam_root for the other mode.
+INSTANT_ONLY_EXTRA_KEYS = frozenset(
+    {
+        "deeplivecam_root",
+        "dlc_root",
+        "deeplivecam_python",
+        "dlc_session",
+        "preview_target",
+        "target_image",
+        "execution_provider",
+        "frame_processors",
+        "execution_threads",
+        "dlc_many_faces",
+        "dlc_mouth_mask",
+        "dlc_max_memory",
+        "preview_timeout_sec",
+        "live_mirror",
+        "dlc_lang",
+    }
+)
+
 # Keys that ride in EngineConfig.extra (must not be dropped).
 EXTRA_SETTING_KEYS = (
     "dfm_path",
@@ -49,6 +71,11 @@ def build_engine_config(
     for key in EXTRA_SETTING_KEYS:
         if key in settings and settings[key] not in (None, ""):
             extra[key] = settings[key]
+    mode = str(settings.get("work_mode") or "")
+    engine = str(settings.get("engine") or "")
+    if mode == "pro" or engine == "deepfacelive":
+        for key in INSTANT_ONLY_EXTRA_KEYS:
+            extra.pop(key, None)
     return EngineConfig(
         camera_index=int(settings.get("camera_index", 0)),
         width=int(settings.get("width", 1280)),

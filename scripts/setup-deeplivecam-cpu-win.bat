@@ -12,18 +12,25 @@ echo === Deep-Live-Cam 一键安装（CPU）===
 echo 目标目录: %DLC_DIR%
 echo.
 
+if defined FSS_PY (
+  set "PY=%FSS_PY%"
+  goto :py_ready
+)
+
 where py >nul 2>&1
 if errorlevel 1 (
   where python >nul 2>&1
   if errorlevel 1 (
     echo [错误] 未找到 py / python。请先安装 Python 3.11+ 并勾选 Add to PATH。
-    pause
+    call :maybe_pause
     exit /b 1
   )
   set "PY=python"
 ) else (
   set "PY=py -3"
 )
+
+:py_ready
 
 where git >nul 2>&1
 if errorlevel 1 (
@@ -61,7 +68,7 @@ if "%USE_ZIP%"=="1" (
   powershell -NoProfile -Command "Invoke-WebRequest -Uri 'https://github.com/hacksider/Deep-Live-Cam/archive/refs/heads/main.zip' -OutFile $env:ZIP"
   if errorlevel 1 (
     echo [错误] 下载失败，请手动从 GitHub 下 ZIP 解压到 %DLC_DIR%
-    pause
+    call :maybe_pause
     exit /b 1
   )
   powershell -NoProfile -Command "Expand-Archive -Force $env:ZIP (Join-Path $env:TEMP 'dlc-extract')"
@@ -73,7 +80,7 @@ if "%USE_ZIP%"=="1" (
 
 if not exist "%DLC_DIR%\run.py" (
   echo [错误] 未找到 %DLC_DIR%\run.py
-  pause
+  call :maybe_pause
   exit /b 1
 )
 
@@ -84,7 +91,7 @@ if not exist "venv\Scripts\python.exe" (
   %PY% -m venv venv
   if errorlevel 1 (
     echo [错误] 创建 venv 失败
-    pause
+    call :maybe_pause
     exit /b 1
   )
 )
@@ -94,7 +101,7 @@ echo [3/5] 升级 pip，并安装预编译 insightface（不从源码编译）..
 python -m pip install -U pip
 if errorlevel 1 (
   echo [错误] 升级 pip 失败
-  pause
+  call :maybe_pause
   exit /b 1
 )
 
@@ -102,7 +109,7 @@ set "PY_MINOR="
 for /f %%v in ('python -c "import sys; print(sys.version_info.minor)"') do set "PY_MINOR=%%v"
 if not defined PY_MINOR (
   echo [错误] 无法检测 venv 里的 Python 版本。已停止，不会从源码编译 insightface。
-  pause
+  call :maybe_pause
   exit /b 1
 )
 echo 检测到 Python 3.%PY_MINOR%
@@ -115,7 +122,7 @@ if not defined IF_TAG (
   echo [错误] Python 3.%PY_MINOR% 没有对应的预编译 insightface 轮子（仅 3.11 / 3.12 / 3.13）。
   echo        请改用 Python 3.11 或 3.12，或安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
   echo        本脚本不会从源码编译 insightface。
-  pause
+  call :maybe_pause
   exit /b 1
 )
 
@@ -128,7 +135,7 @@ if errorlevel 1 (
   echo [错误] 预编译 insightface 下载失败（Python 3.%PY_MINOR%：%IF_WHL%）。
   echo        请安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
   echo        本脚本不会从源码编译 insightface，已停止安装。
-  pause
+  call :maybe_pause
   exit /b 1
 )
 
@@ -137,7 +144,7 @@ if errorlevel 1 (
   echo [错误] 预编译 insightface 安装失败（Python 3.%PY_MINOR%）。
   echo        请安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
   echo        本脚本不会从源码编译 insightface，已停止安装。
-  pause
+  call :maybe_pause
   exit /b 1
 )
 
@@ -146,7 +153,7 @@ python -m pip install -r requirements.txt -i %MIRROR% --only-binary insightface
 if errorlevel 1 (
   echo [错误] pip 安装失败，可重跑本脚本或把报错发群。
   echo        insightface 只使用上面的预编译轮；若仍失败，请安装 Visual C++ Build Tools，或使用 https://deeplivecam.net
-  pause
+  call :maybe_pause
   exit /b 1
 )
 
@@ -164,11 +171,21 @@ echo.
 echo === 完成 ===
 echo Deep-Live-Cam 目录:
 echo   %DLC_DIR%
+if /I "%FSS_DLC_NOPAUSE%"=="1" (
+  echo [OK] Deep-Live-Cam 已就绪，交给一键安装继续写设置。
+  exit /b 0
+)
 echo.
 echo 下一步:
 echo 1^) 若没有 ffmpeg: winget install ffmpeg ，然后新开终端
 echo 2^) 可先试跑:   cd /d "%DLC_DIR%" ^&^& venv\Scripts\activate ^&^& python run.py
-echo 3^) 打开 FaceSwap Studio → 设置 → Deep-Live-Cam 目录 填上面路径
+echo 3^) 不必手填路径：双击 scripts\setup-all-win.bat ，会写入设置并在桌面创建「打开换脸」
 echo 4^) 本机无独显，换脸会很慢，先验证能开窗/出首帧即可
 echo.
+call :maybe_pause
+exit /b 0
+
+:maybe_pause
+if /I "%FSS_DLC_NOPAUSE%"=="1" exit /b 0
 pause
+exit /b 0

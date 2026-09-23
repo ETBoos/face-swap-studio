@@ -60,8 +60,10 @@ if errorlevel 1 (
 
 echo.
 echo [完成] 安装成功。请运行 scripts\start-win.bat 启动。
-echo [注意] 即用模式会启动本机 Deep-Live-Cam（需 DEEP_LIVE_CAM_ROOT）。未安装 DLC/DFL 时没有换脸画面。
+echo [注意] 即用模式会启动本机 Deep-Live-Cam。未安装 DLC/DFL 时没有换脸画面。
+echo [提示] 第一次使用请双击 scripts\setup-all-win.bat ：安装 Deep-Live-Cam、自动写好路径，并在桌面创建「打开换脸」。
 echo [合规] 仅限授权影视用途。
 echo.
+if /I "%FSS_SETUP_NOPAUSE%"=="1" exit /b 0
 pause
 endlocal

@@ -28,6 +28,10 @@ from typing import Any, NoReturn, Optional
 import cv2
 import numpy as np
 
+from face_swap_studio.core.studio_settings import (
+    looks_like_deeplivecam_root,
+    probe_deeplivecam_root,
+)
 from face_swap_studio.engines.base import (
     EngineCapabilities,
     EngineConfig,
@@ -58,10 +62,6 @@ def _as_bool(value: Any) -> bool:
     return bool(value)
 
 
-def _looks_like_dlc_root(root: Path) -> bool:
-    return (root / "run.py").is_file() and (root / "modules" / "core.py").is_file()
-
-
 def resolve_deeplivecam_root(explicit: Optional[str] = None) -> Optional[Path]:
     """Find a Deep-Live-Cam checkout.
 
@@ -70,35 +70,10 @@ def resolve_deeplivecam_root(explicit: Optional[str] = None) -> Optional[Path]:
     """
     if explicit is not None and str(explicit).strip():
         root = Path(str(explicit).strip()).expanduser()
-        if _looks_like_dlc_root(root):
+        if looks_like_deeplivecam_root(root):
             return root.resolve()
         return None
-
-    candidates: list[Path] = []
-    for key in ("DEEP_LIVE_CAM_ROOT", "DLC_ROOT"):
-        env = os.environ.get(key)
-        if env:
-            candidates.append(Path(env).expanduser())
-    for base in (
-        Path(r"C:\Deep-Live-Cam"),
-        Path(r"D:\Deep-Live-Cam"),
-        Path.home() / "Deep-Live-Cam",
-        Path(r"C:\DeepLiveCam"),
-        Path.home() / "DeepLiveCam",
-    ):
-        candidates.append(base)
-    seen: set[Path] = set()
-    for root in candidates:
-        try:
-            key = root.expanduser()
-        except OSError:
-            continue
-        if key in seen:
-            continue
-        seen.add(key)
-        if _looks_like_dlc_root(key):
-            return key.resolve()
-    return None
+    return probe_deeplivecam_root()
 
 
 def resolve_deeplivecam_python(root: Path, explicit: Optional[str] = None) -> Optional[Path]:
@@ -405,10 +380,11 @@ class DeepLiveCamEngine(FaceSwapEngine):
                     f"{explicit_s}"
                 )
             self._fail(
-                "未找到 Deep-Live-Cam。设置 extra.deeplivecam_root，"
-                "或环境变量 DEEP_LIVE_CAM_ROOT / DLC_ROOT"
+                "未找到 Deep-Live-Cam。"
+                "请双击 scripts\\setup-all-win.bat 一键安装"
+                "（会装到用户目录并自动写入 deeplivecam_root）。"
+                "也可以设置环境变量 DEEP_LIVE_CAM_ROOT / DLC_ROOT"
                 "（目录内需有 run.py 与 modules/core.py）。"
-                "说明见 docs/DEEPLIVECAM_INSTANT.md。"
             )
         self._root = root
 

@@ -14,7 +14,7 @@
 
 像 DLC 目录的条件：存在 `run.py` **并且**存在 `modules/core.py`。
 
-Windows 上可以双击或运行 `scripts\setup-deeplivecam-cpu-win.bat` 做 CPU 一键安装（清华 pip 源、下载模型，装到 `%USERPROFILE%\Deep-Live-Cam`）。装完后把 `deeplivecam_root` 设成该目录。
+Windows 上双击一次 `scripts\setup-all-win.bat`：若 `%USERPROFILE%\Deep-Live-Cam` 还不存在，就调用 `scripts\setup-deeplivecam-cpu-win.bat`（CPU、预编译 insightface、清华 pip 源、模型）。然后把 `deeplivecam_root` 写入 `%USERPROFILE%\FaceSwapStudio\settings.json`，并在桌面创建「打开换脸」（启动 `scripts\start-win.bat`）。之后用这个快捷方式打开，不用手填路径。壳在启动和即用预览时，若 `deeplivecam_root` 仍为空，会再探测该用户目录、`DEEP_LIVE_CAM_ROOT` / `DLC_ROOT` 以及常见盘符路径，找到就写回设置。仍没有时，开始预览会提示一键安装，而不是只报「未找到 Deep-Live-Cam」。专模 DeepFaceLive、激活码和 USDT 不走这条安装。
 
 解释器（不要用本壳的 Python）：
 
@@ -65,7 +65,7 @@ Windows 上可以双击或运行 `scripts\setup-deeplivecam-cpu-win.bat` 做 CPU
 
 需要：Windows、NVIDIA、已装好的 Deep-Live-Cam（官方仓库的 `run.py` + venv）、ffmpeg、一张**已授权**源脸、一张含人脸的目标静帧（或可用的摄像头索引）。
 
-1. 设置 `DEEP_LIVE_CAM_ROOT` 指向含 `run.py` 的目录，或在壳的设置里填「Deep-Live-Cam 目录」。
+1. 双击过 `scripts\setup-all-win.bat` 后，用桌面「打开换脸」启动。打开「设置」，Deep-Live-Cam 目录应已填好。没有跑过一键安装时，也可设 `DEEP_LIVE_CAM_ROOT`，或在设置里填目录。
 2. 可选：`powershell -File scripts\check-deeplivecam.ps1`
 3. 启动壳：`scripts\start-win.bat`
 4. 工作模式保持 **即用（Deep-Live-Cam · 导入脸图）**。即用输出保持 **首帧进预览窗**。

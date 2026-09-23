@@ -21,6 +21,6 @@
 
 ## 装机顺序（现场）
 1. NVIDIA 驱动（RTX 构建优先）
-2. 安装上游 Deep-Live-Cam（即用），记下根目录到 `DEEP_LIVE_CAM_ROOT` 或设置项 `deeplivecam_root`
+2. 即用：双击 `scripts/setup-all-win.bat`（检测或安装 `%USERPROFILE%/Deep-Live-Cam`，自动写入 `deeplivecam_root`，桌面「打开换脸」）。不必手填路径
 3. 装 DeepFaceLive NVIDIA 包（与导出 `.dfm` 的 DFL 版本匹配）
 4. 装本壳：`scripts/setup-win.bat`

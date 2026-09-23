@@ -41,6 +41,23 @@ def test_deeplivecam_keys_survive_settings_to_config():
     assert cfg.source_face_paths == [r"D:\faces\a.png"]
 
 
+def test_pro_config_omits_instant_keys_even_when_dlc_path_is_filled():
+    cfg = build_engine_config(
+        {
+            "work_mode": "pro",
+            "engine": "deepfacelive",
+            "dfm_path": r"D:\models\actor.dfm",
+            "deepfacelive_root": r"D:\DeepFaceLive_NVIDIA",
+            "deeplivecam_root": r"D:\Deep-Live-Cam",
+            "dlc_session": "preview",
+        }
+    )
+    assert cfg.extra["dfm_path"] == r"D:\models\actor.dfm"
+    assert cfg.extra["deepfacelive_root"] == r"D:\DeepFaceLive_NVIDIA"
+    assert "deeplivecam_root" not in cfg.extra
+    assert "dlc_session" not in cfg.extra
+
+
 def test_nested_extra_merged():
     cfg = build_engine_config(
         {

@@ -30,6 +30,16 @@ from PySide6.QtWidgets import (
 from face_swap_studio import __version__
 from face_swap_studio.core.consent import BANNER_ZH, CONSENT_CHECKLIST_ZH
 from face_swap_studio.core.project import ProjectMeta, ProjectStore
+from face_swap_studio.core.studio_settings import (
+    DLC_SETUP_OFFER_NO_SCRIPT_ZH,
+    DLC_SETUP_OFFER_ZH,
+    ensure_deeplivecam_root,
+    find_setup_all_script,
+    launch_setup_script,
+    load_settings,
+    resolve_settings_path,
+    save_settings,
+)
 from face_swap_studio.core.usage_log import UsageLog
 from face_swap_studio.engines.base import EngineStatus
 from face_swap_studio.engines.config_builder import build_engine_config
@@ -77,25 +87,10 @@ class MainWindow(QMainWindow):
             self.log.record("license_gate", issues=gate_issues)
         self.current: Optional[ProjectMeta] = None
         self.engine = create_engine("placeholder")
-        self.settings = {
-            "width": 1280,
-            "height": 720,
-            "camera_index": 0,
-            "gpu_device": "cuda:0",
-            "engine": "placeholder",
-            "work_mode": WorkMode.SIMPLE.value,
-            "dfm_path": "",
-            "facefusion_root": "",
-            "deepfacelive_root": "",
-            "userdata_dir": "",
-            "deeplivecam_root": "",
-            "deeplivecam_python": "",
-            "dlc_session": "preview",
-            "execution_provider": "",
-            "preview_target": "",
-            "instant_source_face": "",
-        }
+        self._settings_path = resolve_settings_path(self.store.root)
+        self.settings = load_settings(self._settings_path)
         self._previewing = False
+        self._capture_detected_deeplivecam_root()
 
         self._build_ui()
         self._refresh_project_list()
@@ -238,6 +233,13 @@ class MainWindow(QMainWindow):
 
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("就绪 — 仅限授权影视用途")
+        saved_mode = str(self.settings.get("work_mode") or WorkMode.SIMPLE.value)
+        mode_idx = self.mode_combo.findData(saved_mode)
+        if mode_idx >= 0:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentIndex(mode_idx)
+            self.mode_combo.blockSignals(False)
+        self._sync_session_combo()
         self._on_mode_changed()
 
     # --- projects ---
@@ -367,6 +369,7 @@ class MainWindow(QMainWindow):
                 self.preview_label.clear()
                 self.engine_info.setText("引擎: placeholder（调试占位，无换脸）")
             self._refresh_face_label()
+            self._persist_settings()
 
     def _start_preview(self) -> None:
         if self._previewing:
@@ -386,6 +389,9 @@ class MainWindow(QMainWindow):
 
         engine_name = self._resolve_engine_name()
         self.settings["engine"] = engine_name
+        if engine_name == "deeplivecam" and not self._deeplivecam_root_ready():
+            self._offer_dlc_setup()
+            return
         if engine_name == "deepfacelive":
             if not self._pro_license_ok(notify=True):
                 return
@@ -413,12 +419,16 @@ class MainWindow(QMainWindow):
                 self.engine.set_source_faces(self._asset_paths())
             self.engine.start()
         except Exception as e:
+            if engine_name == "deeplivecam" and "未找到 Deep-Live-Cam" in str(e):
+                self.log.record("preview_error", error=str(e), engine=engine_name)
+                self._offer_dlc_setup()
+                return
             hint = ""
             if engine_name == "deeplivecam":
                 hint = (
                     "\n\n即用模式只负责启动本机 Deep-Live-Cam，不在本程序里实现换脸。"
-                    "请确认安装目录（设置或 DEEP_LIVE_CAM_ROOT）。"
-                    "见 docs/DEEPLIVECAM_INSTANT.md。"
+                    "路径不对时可以双击 scripts\\setup-all-win.bat ，"
+                    "它会安装并自动写好目录。然后用桌面「打开换脸」重新打开。"
                 )
             elif engine_name == "deepfacelive":
                 hint = "\n\n专模模式启动本机 DeepFaceLive。请确认 .dfm 与 deepfacelive_root。"
@@ -593,11 +603,7 @@ class MainWindow(QMainWindow):
         self.session_combo.setEnabled(instant)
         if instant:
             self.preview_caption.setText("即用预览（Deep-Live-Cam）")
-            self.preview_label.setText(
-                "选择脸图后点「开始预览」。\n"
-                "默认：Deep-Live-Cam 静帧首帧进入本窗口。\n"
-                "「DLC 实时窗口」会打开上游 Live 界面（需 Windows + NVIDIA 摄像头验收）。"
-            )
+            self.preview_label.setText(self._instant_idle_text())
             caps_name = "deeplivecam"
         else:
             self.preview_caption.setText("专模预览（DeepFaceLive）")
@@ -623,6 +629,70 @@ class MainWindow(QMainWindow):
             self.mode_combo.setCurrentIndex(idx)
         else:
             self._on_mode_changed()
+
+    def _instant_idle_text(self) -> str:
+        lines = [
+            "选择脸图后点「开始预览」。",
+            "默认：Deep-Live-Cam 静帧首帧进入本窗口。",
+            "「DLC 实时窗口」会打开上游 Live 界面（需 Windows + NVIDIA 摄像头验收）。",
+        ]
+        root = str(self.settings.get("deeplivecam_root") or "").strip()
+        if root:
+            lines.append(f"Deep-Live-Cam 目录已就绪：{root}")
+        else:
+            lines.append("还没有目录。开始预览时可一键安装，不用手填路径。")
+        return "\n".join(lines)
+
+    def _capture_detected_deeplivecam_root(self) -> None:
+        """If the saved path is empty, probe and persist a checkout."""
+        previous = str(self.settings.get("deeplivecam_root") or "").strip()
+        found = ensure_deeplivecam_root(self.settings)
+        if found and found != previous:
+            self._persist_settings()
+            self.log.record("deeplivecam_root_detected", path=found)
+
+    def _persist_settings(self) -> None:
+        save_settings(self.settings, self._settings_path)
+
+    def _deeplivecam_root_ready(self) -> bool:
+        """True when Instant can try to launch.
+
+        An empty path is probed and saved. A non-empty but invalid path
+        stays in place so the engine can name that directory.
+        """
+        previous = str(self.settings.get("deeplivecam_root") or "").strip()
+        found = ensure_deeplivecam_root(self.settings)
+        if found:
+            if found != previous:
+                self._persist_settings()
+                self.log.record("deeplivecam_root_detected", path=found)
+            return True
+        return bool(previous)
+
+    def _offer_dlc_setup(self) -> None:
+        script = find_setup_all_script()
+        if script is None:
+            QMessageBox.information(self, "还不能换脸", DLC_SETUP_OFFER_NO_SCRIPT_ZH)
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("还不能换脸")
+        box.setText(DLC_SETUP_OFFER_ZH)
+        install = box.addButton("一键安装", QMessageBox.ButtonRole.YesRole)
+        box.addButton("取消", QMessageBox.ButtonRole.NoRole)
+        box.exec()
+        if box.clickedButton() is not install:
+            return
+        try:
+            launch_setup_script(script)
+        except OSError as exc:
+            QMessageBox.warning(
+                self,
+                "未能打开安装",
+                f"{exc}\n\n请手动双击：\n{script}",
+            )
+            return
+        self.statusBar().showMessage("已打开一键安装。完成后双击桌面「打开换脸」。")
 
     def _on_session_changed(self, _index: int = 0) -> None:
         data = self.session_combo.currentData()
