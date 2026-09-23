@@ -398,7 +398,7 @@ class DeepFaceLiveEngine(FaceSwapEngine):
             supports_live_camera=True,
             supports_gpu=True,
             notes=(
-                "顶级模式：识别官方 _internal/CUDA 便携包；自定义 userdata 走 python "
+                "专模：识别官方 _internal/CUDA 便携包；自定义 userdata 走 python "
                 "--userdata-dir；.dfm 预检后写入 userdata/dfm_models。"
                 "RUNNING≠已加载模型≠首帧；需在 DFL UI 选 Face swapper。"
             ),
@@ -425,7 +425,7 @@ class DeepFaceLiveEngine(FaceSwapEngine):
         dfm_raw = (config.extra.get("dfm_path") or "").strip()
         if not dfm_raw:
             self._status = EngineStatus.ERROR
-            self._error = "顶级模式需要有效的 .dfm 文件路径（extra.dfm_path）"
+            self._error = "专模模式需要有效的 .dfm 文件路径（extra.dfm_path）"
             raise RuntimeError(self._error)
 
         path = Path(dfm_raw).expanduser()
@@ -458,7 +458,7 @@ class DeepFaceLiveEngine(FaceSwapEngine):
         if require_nvidia and build.kind == "dx12":
             self._status = EngineStatus.ERROR
             self._error = (
-                "检测到 DeepFaceLive **DX12/DirectML 构建**，顶级实时请改用 **NVIDIA 构建**。"
+                "检测到 DeepFaceLive **DX12/DirectML 构建**，专模实时请改用 **NVIDIA 构建**。"
                 f"依据：{build.evidence}。provider={build.provider}。安装目录：{root}"
             )
             raise RuntimeError(self._error)
@@ -543,10 +543,12 @@ def create_engine(kind: str = "placeholder") -> FaceSwapEngine:
     kind = (kind or "placeholder").lower()
     if kind in ("deepfacelive", "dfl", "pro"):
         return DeepFaceLiveEngine()
-    if kind in ("facefusion", "ff", "simple"):
-        from face_swap_studio.engines.facefusion_stub import create_facefusion_engine
+    # 即用. "facefusion" remains a legacy alias so old settings do not
+    # resurrect the FaceFusion stub.
+    if kind in ("deeplivecam", "dlc", "simple", "facefusion", "ff"):
+        from face_swap_studio.engines.deeplivecam import DeepLiveCamEngine
 
-        return create_facefusion_engine()
+        return DeepLiveCamEngine()
     from face_swap_studio.engines.placeholder import PlaceholderEngine
 
     return PlaceholderEngine()

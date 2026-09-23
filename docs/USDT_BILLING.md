@@ -15,8 +15,10 @@
 ## 壳内模块
 
 - `licensing/plans.py` — 档位目录
-- `licensing/store.py` — 本地 `license.json` + `apply_usdt_payment_callback()`
+- `licensing/codes.py` — 试用码表（`FS-1D` 1 天 / `FS-30D` 30 天）
+- `licensing/store.py` — 本地 `license.json`、`activate_code()`、`apply_usdt_payment_callback()`
 - 回调：链上到账服务验证 tx 后调用回调 → `active=true` 开授权
+- 试用与 USDT 并存。试用到期回到未激活，不升 Pro。增加试用码见 `docs/ACTIVATION_CODES.md`。
 
 ## 未做（下一迭代）
 

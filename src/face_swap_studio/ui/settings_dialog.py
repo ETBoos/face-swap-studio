@@ -14,7 +14,21 @@ from PySide6.QtWidgets import (
 )
 
 # Keys the dialog accepts; callers may pass a larger settings dict.
-DIALOG_KEYS = ("width", "height", "camera_index", "gpu_device", "engine")
+DIALOG_KEYS = (
+    "width",
+    "height",
+    "camera_index",
+    "gpu_device",
+    "engine",
+    "deeplivecam_root",
+    "dlc_session",
+    "execution_provider",
+    "preview_target",
+    # 专模 / DeepFaceLive. Empty strings are kept so a cleared field round-trips.
+    "dfm_path",
+    "deepfacelive_root",
+    "userdata_dir",
+)
 
 
 class SettingsDialog(QDialog):
@@ -27,6 +41,13 @@ class SettingsDialog(QDialog):
         camera_index: int = 0,
         gpu_device: str = "cuda:0",
         engine: str = "placeholder",
+        deeplivecam_root: str = "",
+        dlc_session: str = "preview",
+        execution_provider: str = "",
+        preview_target: str = "",
+        dfm_path: str = "",
+        deepfacelive_root: str = "",
+        userdata_dir: str = "",
         **_ignored,
     ) -> None:
         super().__init__(parent)
@@ -54,21 +75,58 @@ class SettingsDialog(QDialog):
         form.addRow("GPU 设备", self.gpu_edit)
 
         gpu_note = QLabel(
-            "说明：GPU 设备字符串将在接入 DeepFaceLive 后传给 CUDA 后端。\n"
+            "说明：即用模式把 GPU 设备映射成 Deep-Live-Cam 的 --execution-provider"
+            "（cuda:0 → cuda）。专模仍把该字符串交给 DeepFaceLive。\n"
             "推荐硬件：NVIDIA RTX 4080 / 4090（Windows + 最新 Studio 驱动）。\n"
-            "当前占位引擎不使用 GPU。"
+            "占位引擎不使用 GPU，也不做换脸。"
         )
         gpu_note.setWordWrap(True)
         form.addRow("", gpu_note)
 
         self.engine_combo = QComboBox()
-        self.engine_combo.addItem("占位引擎 (Placeholder)", "placeholder")
-        self.engine_combo.addItem("DeepFaceLive (未接入 / stub)", "deepfacelive")
-        self.engine_combo.addItem("FaceFusion (简易)", "facefusion")
+        self.engine_combo.addItem("占位引擎 (调试，无换脸)", "placeholder")
+        self.engine_combo.addItem("即用 Deep-Live-Cam", "deeplivecam")
+        self.engine_combo.addItem("专模 DeepFaceLive", "deepfacelive")
         idx = self.engine_combo.findData(engine)
         if idx >= 0:
             self.engine_combo.setCurrentIndex(idx)
         form.addRow("引擎", self.engine_combo)
+
+        self.dlc_root_edit = QLineEdit(str(deeplivecam_root))
+        self.dlc_root_edit.setPlaceholderText(r"C:\Deep-Live-Cam 或留空用 DEEP_LIVE_CAM_ROOT")
+        form.addRow("Deep-Live-Cam 目录", self.dlc_root_edit)
+
+        self.session_combo = QComboBox()
+        self.session_combo.addItem("首帧进预览窗", "preview")
+        self.session_combo.addItem("DLC 实时窗口", "live")
+        session_idx = self.session_combo.findData(dlc_session or "preview")
+        if session_idx >= 0:
+            self.session_combo.setCurrentIndex(session_idx)
+        form.addRow("即用输出", self.session_combo)
+
+        self.provider_edit = QLineEdit(str(execution_provider))
+        self.provider_edit.setPlaceholderText("留空则按 GPU 设备推导，NVIDIA 默认 cuda")
+        form.addRow("DLC execution-provider", self.provider_edit)
+
+        self.preview_target_edit = QLineEdit(str(preview_target))
+        self.preview_target_edit.setPlaceholderText("含人脸的目标静帧；留空则抓一张摄像头画面")
+        form.addRow("首帧目标静帧", self.preview_target_edit)
+
+        pro_note = QLabel("专模使用本机 DeepFaceLive，需要已有 .dfm。不会走 Deep-Live-Cam。")
+        pro_note.setWordWrap(True)
+        form.addRow("", pro_note)
+
+        self.dfl_root_edit = QLineEdit(str(deepfacelive_root))
+        self.dfl_root_edit.setPlaceholderText(r"C:\DeepFaceLive_NVIDIA 或留空用 DEEPFACELIVE_ROOT")
+        form.addRow("专模 DeepFaceLive 目录", self.dfl_root_edit)
+
+        self.userdata_edit = QLineEdit(str(userdata_dir))
+        self.userdata_edit.setPlaceholderText("留空则使用安装目录下 userdata")
+        form.addRow("专模 userdata 目录", self.userdata_edit)
+
+        self.dfm_edit = QLineEdit(str(dfm_path))
+        self.dfm_edit.setPlaceholderText(r"已有模型，例如 D:\models\actor.dfm")
+        form.addRow("专模 .dfm", self.dfm_edit)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
@@ -87,4 +145,11 @@ class SettingsDialog(QDialog):
             "camera_index": self.camera_spin.value(),
             "gpu_device": self.gpu_edit.text().strip() or "cuda:0",
             "engine": self.engine_combo.currentData(),
+            "deeplivecam_root": self.dlc_root_edit.text().strip(),
+            "dlc_session": self.session_combo.currentData(),
+            "execution_provider": self.provider_edit.text().strip(),
+            "preview_target": self.preview_target_edit.text().strip(),
+            "dfm_path": self.dfm_edit.text().strip(),
+            "deepfacelive_root": self.dfl_root_edit.text().strip(),
+            "userdata_dir": self.userdata_edit.text().strip(),
         }

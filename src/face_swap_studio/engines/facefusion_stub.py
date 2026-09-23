@@ -1,4 +1,8 @@
-"""FaceFusion adapter — SIMPLE mode (easy config, no .dfm)."""
+"""Legacy FaceFusion stub.
+
+即用 / simple mode does not use this module. create_engine("facefusion")
+returns DeepLiveCamEngine. Kept so old imports do not crash.
+"""
 
 from __future__ import annotations
 

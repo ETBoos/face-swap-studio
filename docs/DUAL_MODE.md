@@ -4,21 +4,23 @@
 
 | 模式 | 名称 | 何时用 | 后端 | 用户操作 |
 |------|------|--------|------|----------|
-| **简易** | Simple | 无 `.dfm`、要快验像真度 / 简单配置 | **FaceFusion**（或 Rope，默认 FF） | 选目标脸图 → 开摄像头/视频 → 预览 |
-| **顶级** | Pro | 已有专模 `.dfm`，要特定真人上限 | **DeepFaceLive** | 导入 `.dfm` → 开摄像头 → 实时预览 |
+| **即用** | Simple | 无 `.dfm`，导入一张脸图就要预览 | **Deep-Live-Cam** | 选源脸 → 首帧进预览窗，或打开 DLC Live 窗口 |
+| **专模** | Pro | 已有专模 `.dfm` | **DeepFaceLive** | 导入 `.dfm` → 开摄像头 → DFL 窗口实时预览 |
 
 ## 分工
-- **编程助手**：壳、模式切换 UI、简易模式（FaceFusion）适配与装机脚本
-- **编程助手2号**：顶级模式（DeepFaceLive / `.dfm`）安装、版本匹配、联调
+- **即用**：壳、模式切换、Deep-Live-Cam 适配（`engines/deeplivecam.py`）。不实现换脸算法
+- **专模**：DeepFaceLive / `.dfm` 适配保持原样（另一条工作流）
 - **技术调研**：采集/验收规格
 
 ## 壳侧统一契约
 见 `engines/base.py` + `engines/modes.py`：
-- `WorkMode.SIMPLE` → FaceFusion 适配器
-- `WorkMode.PRO` → DeepFaceLive 适配器（需 `dfm_path`）
+- `WorkMode.SIMPLE` → `deeplivecam`（Deep-Live-Cam，需要源脸图）
+- `WorkMode.PRO` → `deepfacelive`（需要 `dfm_path`）
+
+查找、启动命令和配置键：`docs/DEEPLIVECAM_INSTANT.md`。
 
 ## 装机顺序（现场）
 1. NVIDIA 驱动（RTX 构建优先）
-2. 装 FaceFusion（简易先通）
+2. 即用：双击 `scripts/setup-all-win.bat`（检测或安装 `%USERPROFILE%/Deep-Live-Cam`，自动写入 `deeplivecam_root`，桌面「打开换脸」）。不必手填路径
 3. 装 DeepFaceLive NVIDIA 包（与导出 `.dfm` 的 DFL 版本匹配）
 4. 装本壳：`scripts/setup-win.bat`

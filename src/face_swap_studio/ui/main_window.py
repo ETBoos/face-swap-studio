@@ -2,16 +2,18 @@
 
 from __future__ import annotations
 
-import sys
+import os
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 import cv2
 import numpy as np
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QProcess, QProcessEnvironment, Qt, QTimer
 from PySide6.QtGui import QImage, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox,
+    QDialog,
     QFileDialog,
     QHBoxLayout,
     QInputDialog,
@@ -19,6 +21,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QStatusBar,
@@ -28,19 +31,104 @@ from PySide6.QtWidgets import (
 
 from face_swap_studio import __version__
 from face_swap_studio.core.consent import BANNER_ZH, CONSENT_CHECKLIST_ZH
+from face_swap_studio.core.env_check import (
+    apply_ready_environment,
+    assess_instant_environment,
+)
 from face_swap_studio.core.project import ProjectMeta, ProjectStore
+from face_swap_studio.core.studio_settings import (
+    DLC_SETUP_OFFER_NO_SCRIPT_ZH,
+    DLC_SETUP_OFFER_ZH,
+    ensure_deeplivecam_root,
+    find_cpu_setup_script,
+    find_setup_all_script,
+    load_settings,
+    looks_like_deeplivecam_root,
+    resolve_settings_path,
+    save_settings,
+)
 from face_swap_studio.core.usage_log import UsageLog
+from face_swap_studio.engines.base import EngineStatus
 from face_swap_studio.engines.config_builder import build_engine_config
 from face_swap_studio.engines.deepfacelive_stub import create_engine
 from face_swap_studio.engines.lifecycle import replace_engine, shutdown_engine
 from face_swap_studio.engines.modes import MODE_ENGINE_IDS, MODE_LABELS_ZH, WorkMode
-from face_swap_studio.licensing.plans import PlanTier
 from face_swap_studio.licensing.store import LicenseStore
 from face_swap_studio.ui.settings_dialog import DIALOG_KEYS, SettingsDialog
 
 
+def _format_expiry(iso: str) -> str:
+    try:
+        moment = datetime.fromisoformat(iso)
+    except ValueError:
+        return iso
+    if moment.tzinfo is None:
+        moment = moment.replace(tzinfo=timezone.utc)
+    return moment.astimezone(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+
+
 def _default_projects_root() -> Path:
     return Path.home() / "FaceSwapStudio" / "projects"
+
+
+_LOCKED_PREVIEW_ZH = (
+    "未激活或试用已到期，不能开始预览。\n"
+    "请点击「激活」输入 FS-1D（1 天）或 FS-30D（30 天）试用码。\n"
+    "USDT 年费开通后也可预览。试用到期回到未激活，不会自动升级 Pro。"
+)
+
+
+class _CpuSetupDialog(QDialog):
+    """Run the existing CPU setup bat and show its log. Studio stays open."""
+
+    def __init__(self, script: Path, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("正在安装换脸组件")
+        self.resize(640, 420)
+        self._code = 1
+        note = QLabel(
+            "正在用现有的 CPU 安装补齐 Deep-Live-Cam、insightface 预编译轮和模型。"
+            "已经下载过的文件会跳过。这个窗口关掉也不会关掉主程序。"
+        )
+        note.setWordWrap(True)
+        self.log = QPlainTextEdit()
+        self.log.setReadOnly(True)
+        self.btn_close = QPushButton("关闭")
+        self.btn_close.setEnabled(False)
+        self.btn_close.clicked.connect(self.accept)
+        layout = QVBoxLayout(self)
+        layout.addWidget(note)
+        layout.addWidget(self.log, stretch=1)
+        layout.addWidget(self.btn_close)
+
+        self.proc = QProcess(self)
+        self.proc.setWorkingDirectory(str(script.resolve().parent))
+        self.proc.setProcessChannelMode(QProcess.ProcessChannelMode.MergedChannels)
+        env = QProcessEnvironment.systemEnvironment()
+        env.insert("FSS_DLC_NOPAUSE", "1")
+        self.proc.setProcessEnvironment(env)
+        self.proc.readyRead.connect(self._append_log)
+        self.proc.finished.connect(self._finished)
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        self.proc.start(comspec, ["/d", "/c", str(script)])
+
+    def _append_log(self) -> None:
+        raw = bytes(self.proc.readAll())
+        text = raw.decode("utf-8", errors="replace")
+        if text:
+            self.log.appendPlainText(text.rstrip())
+
+    def _finished(self, code: int, _status) -> None:
+        self._append_log()
+        self._code = int(code)
+        self.btn_close.setEnabled(True)
+        self.log.appendPlainText(f"\n安装进程结束，退出码 {code}。")
+
+    @classmethod
+    def run(cls, parent, script: Path) -> int:
+        dlg = cls(script, parent)
+        dlg.exec()
+        return dlg._code
 
 
 class MainWindow(QMainWindow):
@@ -51,24 +139,18 @@ class MainWindow(QMainWindow):
 
         self.store = ProjectStore(projects_root or _default_projects_root())
         self.log = UsageLog(self.store.root.parent / "logs" / "usage.jsonl")
-        self.license = LicenseStore(self.store.root.parent / "license.json")
+        self.license = LicenseStore(
+            self.store.root.parent / "license.json", enforce_gate=False
+        )
         gate_issues = self.license.enforce_startup_gate()
         if gate_issues:
             self.log.record("license_gate", issues=gate_issues)
         self.current: Optional[ProjectMeta] = None
         self.engine = create_engine("placeholder")
-        self.settings = {
-            "width": 1280,
-            "height": 720,
-            "camera_index": 0,
-            "gpu_device": "cuda:0",
-            "engine": "placeholder",
-            "work_mode": WorkMode.SIMPLE.value,
-            "dfm_path": "",
-            "facefusion_root": "",
-            "deepfacelive_root": "",
-        }
+        self._settings_path = resolve_settings_path(self.store.root)
+        self.settings = load_settings(self._settings_path)
         self._previewing = False
+        self._capture_detected_deeplivecam_root()
 
         self._build_ui()
         self._refresh_project_list()
@@ -77,6 +159,8 @@ class MainWindow(QMainWindow):
         self._timer = QTimer(self)
         self._timer.setInterval(33)  # ~30 FPS tick
         self._timer.timeout.connect(self._on_tick)
+        if self._should_prompt_activation():
+            QTimer.singleShot(0, self._prompt_activation)
 
     def _build_ui(self) -> None:
         central = QWidget()
@@ -108,6 +192,18 @@ class MainWindow(QMainWindow):
         self.dfm_label = QLabel("未选择 .dfm")
         self.dfm_label.setStyleSheet("color:#666;")
         mode_row.addWidget(self.dfm_label, stretch=1)
+        self.btn_face = QPushButton("选择脸图…")
+        self.btn_face.clicked.connect(self._choose_source_face)
+        mode_row.addWidget(self.btn_face)
+        self.face_label = QLabel("未选择源脸")
+        self.face_label.setStyleSheet("color:#666;")
+        mode_row.addWidget(self.face_label, stretch=1)
+        mode_row.addWidget(QLabel("即用输出"))
+        self.session_combo = QComboBox()
+        self.session_combo.addItem("首帧进预览窗", "preview")
+        self.session_combo.addItem("DLC 实时窗口", "live")
+        self.session_combo.currentIndexChanged.connect(self._on_session_changed)
+        mode_row.addWidget(self.session_combo)
         root.addLayout(mode_row)
 
         splitter = QSplitter(Qt.Orientation.Horizontal)
@@ -157,8 +253,9 @@ class MainWindow(QMainWindow):
         # Right: preview + actions
         right = QWidget()
         right_l = QVBoxLayout(right)
-        right_l.addWidget(QLabel("摄像头预览（占位）"))
-        self.preview_label = QLabel("尚未开始预览\n\n当前为产品壳 + 占位引擎\n接入 DeepFaceLive 前无真实换脸")
+        self.preview_caption = QLabel("预览")
+        right_l.addWidget(self.preview_caption)
+        self.preview_label = QLabel("尚未开始预览")
         self.preview_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.preview_label.setMinimumSize(640, 360)
         self.preview_label.setStyleSheet(
@@ -170,17 +267,25 @@ class MainWindow(QMainWindow):
         actions = QHBoxLayout()
         self.btn_start = QPushButton("开始预览")
         self.btn_start.clicked.connect(self._start_preview)
+        self.btn_start.setEnabled(False)
         self.btn_stop = QPushButton("停止")
         self.btn_stop.clicked.connect(self._stop_preview)
         self.btn_stop.setEnabled(False)
         self.btn_export = QPushButton("导出参考帧")
         self.btn_export.clicked.connect(self._export_frame)
+        self.btn_export.setEnabled(False)
+        self.btn_activate = QPushButton("激活")
+        self.btn_activate.clicked.connect(self._prompt_activation)
         self.btn_settings = QPushButton("设置…")
         self.btn_settings.clicked.connect(self._open_settings)
+        self.btn_env = QPushButton("环境监测")
+        self.btn_env.clicked.connect(self._check_environment)
         actions.addWidget(self.btn_start)
         actions.addWidget(self.btn_stop)
         actions.addWidget(self.btn_export)
+        actions.addWidget(self.btn_activate)
         actions.addWidget(self.btn_settings)
+        actions.addWidget(self.btn_env)
         right_l.addLayout(actions)
 
         self.engine_info = QLabel("引擎: Placeholder（stub）")
@@ -191,6 +296,14 @@ class MainWindow(QMainWindow):
 
         self.setStatusBar(QStatusBar())
         self.statusBar().showMessage("就绪 — 仅限授权影视用途")
+        saved_mode = str(self.settings.get("work_mode") or WorkMode.SIMPLE.value)
+        mode_idx = self.mode_combo.findData(saved_mode)
+        if mode_idx >= 0:
+            self.mode_combo.blockSignals(True)
+            self.mode_combo.setCurrentIndex(mode_idx)
+            self.mode_combo.blockSignals(False)
+        self._sync_session_combo()
+        self._on_mode_changed()
 
     # --- projects ---
 
@@ -302,11 +415,31 @@ class MainWindow(QMainWindow):
         dlg_kwargs = {k: self.settings[k] for k in DIALOG_KEYS if k in self.settings}
         dlg = SettingsDialog(self, **dlg_kwargs)
         if dlg.exec():
-            self.settings.update(dlg.values())
-            self.engine_info.setText(f"引擎: {self.settings['engine']}（切换后需重新开始预览）")
+            vals = dlg.values()
+            self.settings.update(vals)
+            self._sync_session_combo()
+            self._sync_dfm_label()
+            engine = vals.get("engine")
+            if engine == "deeplivecam":
+                self._select_mode(WorkMode.SIMPLE)
+            elif engine == "deepfacelive":
+                self._select_mode(WorkMode.PRO)
+            else:
+                if self._previewing:
+                    self._stop_preview()
+                self.settings["engine"] = "placeholder"
+                self.engine = replace_engine(self.engine, "placeholder", factory=create_engine)
+                self.preview_label.clear()
+                self.engine_info.setText("引擎: placeholder（调试占位，无换脸）")
+            self._refresh_face_label()
+            self._persist_settings()
 
     def _start_preview(self) -> None:
         if self._previewing:
+            return
+        if not self.license.allows_preview():
+            self._sync_activation_ui()
+            QMessageBox.information(self, "未激活", _LOCKED_PREVIEW_ZH)
             return
         if self.current and not self.current.consent_checklist_acked:
             reply = QMessageBox.question(
@@ -317,7 +450,22 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 return
 
-        engine_name = self.settings.get("engine", "placeholder")
+        engine_name = self._resolve_engine_name()
+        self.settings["engine"] = engine_name
+        if engine_name == "deeplivecam" and not self._deeplivecam_root_ready():
+            self._offer_dlc_setup()
+            return
+        if engine_name == "deepfacelive":
+            if not self._pro_license_ok(notify=True):
+                return
+            if not self._ensure_dfm_selected():
+                return
+        if engine_name == "deeplivecam" and not self._source_face_paths():
+            self._choose_source_face()
+        source_faces = self._source_face_paths()
+        if engine_name == "deeplivecam" and not source_faces:
+            QMessageBox.information(self, "需要源脸", "即用模式请先选择一张脸图。")
+            return
         self.engine = replace_engine(self.engine, engine_name, factory=create_engine)
 
         wm = None
@@ -325,7 +473,7 @@ class MainWindow(QMainWindow):
             wm = "FaceSwap Studio · 授权预览"
         cfg = build_engine_config(
             self.settings,
-            source_face_paths=self._asset_paths(),
+            source_face_paths=source_faces,
             watermark_text=wm,
         )
         try:
@@ -334,11 +482,20 @@ class MainWindow(QMainWindow):
                 self.engine.set_source_faces(self._asset_paths())
             self.engine.start()
         except Exception as e:
-            QMessageBox.critical(
-                self,
-                "引擎启动失败",
-                f"{e}\n\n提示：DeepFaceLive 尚未接入，请在设置中选择「占位引擎」。",
-            )
+            if engine_name == "deeplivecam" and "未找到 Deep-Live-Cam" in str(e):
+                self.log.record("preview_error", error=str(e), engine=engine_name)
+                self._offer_dlc_setup()
+                return
+            hint = ""
+            if engine_name == "deeplivecam":
+                hint = (
+                    "\n\n即用模式只负责启动本机 Deep-Live-Cam，不在本程序里实现换脸。"
+                    "路径不对时可以双击 scripts\\setup-all-win.bat ，"
+                    "它会安装并自动写好目录。然后用桌面「打开换脸」重新打开。"
+                )
+            elif engine_name == "deepfacelive":
+                hint = "\n\n专模模式启动本机 DeepFaceLive。请确认 .dfm 与 deepfacelive_root。"
+            QMessageBox.critical(self, "引擎启动失败", f"{e}{hint}")
             self.log.record("preview_error", error=str(e), engine=engine_name)
             return
 
@@ -351,7 +508,33 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(True)
         self._timer.start()
         self.log.record("preview_start", engine=engine_name, stub=caps.is_stub)
-        self.statusBar().showMessage("预览中（占位/stub — 无真实换脸）")
+        note = getattr(self.engine, "status_note", lambda: "")()
+        if caps.is_stub:
+            self.statusBar().showMessage("预览中（占位/stub — 无真实换脸）")
+        elif note:
+            self.statusBar().showMessage(note)
+        else:
+            self.statusBar().showMessage(f"预览中 · {caps.name}")
+
+    def _resolve_engine_name(self) -> str:
+        selected = str(self.settings.get("engine") or "")
+        if selected == "placeholder":
+            return "placeholder"
+        try:
+            mode = WorkMode(self.settings.get("work_mode", WorkMode.SIMPLE.value))
+        except ValueError:
+            mode = WorkMode.SIMPLE
+        return MODE_ENGINE_IDS[mode]
+
+    def _source_face_paths(self) -> list[str]:
+        paths: list[str] = []
+        pinned = str(self.settings.get("instant_source_face") or "")
+        if pinned and Path(pinned).is_file():
+            paths.append(str(Path(pinned)))
+        for item in self._asset_paths():
+            if item not in paths:
+                paths.append(item)
+        return paths
 
     def _asset_paths(self) -> list[str]:
         if not self.current:
@@ -371,17 +554,45 @@ class MainWindow(QMainWindow):
             self.engine.stop()
         except Exception:
             pass
-        self.btn_start.setEnabled(True)
         self.btn_stop.setEnabled(False)
-        self.statusBar().showMessage("已停止预览")
+        self._sync_activation_ui()
+        if self.license.allows_preview():
+            self.statusBar().showMessage("已停止预览")
         self.log.record("preview_stop")
 
     def _on_tick(self) -> None:
+        if not self.license.allows_preview():
+            self.license.enforce_startup_gate()
+            self._stop_preview()
+            QMessageBox.information(
+                self,
+                "试用已到期",
+                "试用已结束，已回到未激活。不会自动升级 Pro。\n请重新激活，或完成 USDT 年费开通。",
+            )
+            return
         frame = self.engine.read_frame()
+        status = self.engine.status()
+        if status == EngineStatus.ERROR:
+            err = getattr(self.engine, "last_error", lambda: None)()
+            self._stop_preview()
+            QMessageBox.critical(self, "引擎失败", err or "Deep-Live-Cam / 引擎失败")
+            return
         if frame is None:
+            note = getattr(self.engine, "status_note", lambda: "")()
+            if note:
+                self.statusBar().showMessage(note)
             return
         self._show_bgr(frame.image)
-        self.statusBar().showMessage(f"预览中 ~{frame.fps:.1f} FPS | stub 引擎无真实换脸")
+        kind = (frame.meta or {}).get("kind")
+        if kind == "first_frame":
+            self.statusBar().showMessage(
+                "即用首帧已出画（Deep-Live-Cam 静帧）。"
+                "这不是摄像头实时循环；实时请改「DLC 实时窗口」，并在 Win+NVIDIA 上点 Live。"
+            )
+        elif frame.meta.get("stub"):
+            self.statusBar().showMessage(f"预览中 ~{frame.fps:.1f} FPS | stub 引擎无真实换脸")
+        else:
+            self.statusBar().showMessage(f"预览中 ~{frame.fps:.1f} FPS")
 
     def _show_bgr(self, bgr: np.ndarray) -> None:
         rgb = cv2.cvtColor(bgr, cv2.COLOR_BGR2RGB)
@@ -397,6 +608,9 @@ class MainWindow(QMainWindow):
         )
 
     def _export_frame(self) -> None:
+        if not self.license.allows_preview():
+            QMessageBox.information(self, "未激活", _LOCKED_PREVIEW_ZH)
+            return
         if not self.current:
             QMessageBox.information(self, "提示", "请先选择项目（参考帧将写入项目 exports/）")
             return
@@ -407,8 +621,6 @@ class MainWindow(QMainWindow):
             return
         export_dir = self.store.project_dir(self.current.name) / "exports"
         export_dir.mkdir(parents=True, exist_ok=True)
-        from datetime import datetime, timezone
-
         name = f"ref_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.png"
         out = export_dir / name
         img = frame.image
@@ -430,26 +642,351 @@ class MainWindow(QMainWindow):
 
     def _on_mode_changed(self, _index: int = 0) -> None:
         mode_val = self.mode_combo.currentData()
-        mode = WorkMode(mode_val)
-        if mode == WorkMode.PRO and not self.license.state.allows_pro_dfm():
-            QMessageBox.information(
-                self,
-                "授权提示",
-                "顶级 .dfm 模式需要 Pro/Studio 且 USDT 开授权后启用。\n"
-                f"当前档位: {self.license.state.tier.value} active={self.license.state.active}",
-            )
-        self.settings["work_mode"] = mode_val
+        try:
+            mode = WorkMode(mode_val)
+        except ValueError:
+            mode = WorkMode.SIMPLE
+        # Stop the live session and drop the previous process before the new engine exists.
+        self.settings["work_mode"] = mode.value
         self.settings["engine"] = MODE_ENGINE_IDS[mode]
         if self._previewing:
             self._stop_preview()
         self.engine = replace_engine(
             self.engine, self.settings["engine"], factory=create_engine
         )
-        self.btn_dfm.setEnabled(mode == WorkMode.PRO and self.license.state.allows_pro_dfm())
-        self.statusBar().showMessage(
-            f"{MODE_LABELS_ZH[mode]} | 授权:{self.license.state.tier.value}"
+        self.preview_label.clear()
+        pro = mode == WorkMode.PRO
+        pro_ok = pro and self._pro_license_ok(notify=False)
+        self.btn_dfm.setEnabled(pro_ok)
+        self.dfm_label.setVisible(pro)
+        instant = mode == WorkMode.SIMPLE
+        self.btn_face.setEnabled(instant)
+        self.btn_face.setVisible(instant)
+        self.face_label.setVisible(instant)
+        self.session_combo.setEnabled(instant)
+        if instant:
+            self.preview_caption.setText("即用预览（Deep-Live-Cam）")
+            self.preview_label.setText(self._instant_idle_text())
+            caps_name = "deeplivecam"
+        else:
+            self.preview_caption.setText("专模预览（DeepFaceLive）")
+            self.preview_label.setText(
+                "选择 .dfm 后开始预览。\n"
+                "画面在 DeepFaceLive 窗口，本壳不拉流。\n"
+                "RUNNING 不等于首帧。"
+            )
+            caps_name = "deepfacelive"
+        self.engine_info.setText(f"引擎: {caps_name}（开始预览后启动）")
+        self._sync_dfm_label()
+        self._refresh_face_label()
+        self.log.record("mode_change", mode=mode.value, tier=self.license.state.tier.value)
+        if pro and not pro_ok:
+            QMessageBox.information(self, "授权提示", self._pro_license_message())
+        self._sync_activation_ui()
+
+    def _select_mode(self, mode: WorkMode) -> None:
+        idx = self.mode_combo.findData(mode.value)
+        if idx < 0:
+            return
+        if self.mode_combo.currentIndex() != idx:
+            self.mode_combo.setCurrentIndex(idx)
+        else:
+            self._on_mode_changed()
+
+    def _instant_idle_text(self) -> str:
+        lines = [
+            "选择脸图后点「开始预览」。",
+            "默认：Deep-Live-Cam 静帧首帧进入本窗口。",
+            "「DLC 实时窗口」会打开上游 Live 界面（需 Windows + NVIDIA 摄像头验收）。",
+        ]
+        root = str(self.settings.get("deeplivecam_root") or "").strip()
+        if root:
+            lines.append(f"Deep-Live-Cam 目录已就绪：{root}")
+        else:
+            lines.append("还没有目录。开始预览时可一键安装，不用手填路径。")
+        return "\n".join(lines)
+
+    def _capture_detected_deeplivecam_root(self) -> None:
+        """If the saved path is empty, probe and persist a checkout."""
+        previous = str(self.settings.get("deeplivecam_root") or "").strip()
+        found = ensure_deeplivecam_root(self.settings)
+        if found and found != previous:
+            self._persist_settings()
+            self.log.record("deeplivecam_root_detected", path=found)
+
+    def _persist_settings(self) -> None:
+        save_settings(self.settings, self._settings_path)
+
+    def _deeplivecam_root_ready(self) -> bool:
+        """True when Instant can try to launch.
+
+        An empty path is probed and saved. A non-empty but invalid path
+        stays in place so the engine can name that directory.
+        """
+        previous = str(self.settings.get("deeplivecam_root") or "").strip()
+        found = ensure_deeplivecam_root(self.settings)
+        if found:
+            if found != previous:
+                self._persist_settings()
+                self.log.record("deeplivecam_root_detected", path=found)
+            return True
+        return bool(previous)
+
+    def _offer_dlc_setup(self) -> None:
+        script = find_cpu_setup_script() or find_setup_all_script()
+        if script is None:
+            QMessageBox.information(self, "还不能换脸", DLC_SETUP_OFFER_NO_SCRIPT_ZH)
+            return
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Icon.Question)
+        box.setWindowTitle("还不能换脸")
+        box.setText(DLC_SETUP_OFFER_ZH)
+        install = box.addButton("一键安装", QMessageBox.ButtonRole.YesRole)
+        box.addButton("取消", QMessageBox.ButtonRole.NoRole)
+        box.exec()
+        if box.clickedButton() is not install:
+            return
+        self._run_cpu_setup_and_apply()
+
+    def _check_environment(self) -> None:
+        """One click: detect Instant deps, or install them, then store the path."""
+        report = assess_instant_environment(self.settings)
+        if report.ready:
+            self._apply_env_report(report)
+            QMessageBox.information(
+                self,
+                "环境监测",
+                "环境已就绪，已写入换脸路径。不用再填目录，也不会重新下载。\n\n"
+                + report.summary_zh(),
+            )
+            return
+        answer = QMessageBox.question(
+            self,
+            "环境监测",
+            "还缺组件。点「是」会用现有的 CPU 安装补上"
+            "（Deep-Live-Cam、insightface 预编译轮、依赖和模型）。"
+            "已经有的文件会跳过下载，装完自动写入路径。\n\n" + report.summary_zh(),
         )
-        self.log.record("mode_change", mode=mode_val, tier=self.license.state.tier.value)
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        self._run_cpu_setup_and_apply()
+
+    def _apply_env_report(self, report) -> None:
+        if not apply_ready_environment(self.settings, report):
+            return
+        self._persist_settings()
+        self.log.record(
+            "env_check_ready",
+            deeplivecam_root=self.settings.get("deeplivecam_root", ""),
+        )
+        if self.license.allows_preview() and not self._previewing:
+            try:
+                mode = WorkMode(self.settings.get("work_mode", WorkMode.SIMPLE.value))
+            except ValueError:
+                mode = WorkMode.SIMPLE
+            if mode == WorkMode.SIMPLE:
+                self.preview_label.setText(self._instant_idle_text())
+        self.statusBar().showMessage(
+            f"换脸路径已写入：{self.settings.get('deeplivecam_root', '')}"
+        )
+
+    def _run_cpu_setup_and_apply(self) -> None:
+        script = find_cpu_setup_script()
+        if script is None:
+            QMessageBox.information(self, "环境监测", DLC_SETUP_OFFER_NO_SCRIPT_ZH)
+            return
+        if os.name != "nt":
+            QMessageBox.information(
+                self,
+                "环境监测",
+                "CPU 安装脚本只能在 Windows 上运行。\n" + str(script),
+            )
+            return
+        code = _CpuSetupDialog.run(self, script)
+        installed = Path.home() / "Deep-Live-Cam"
+        if looks_like_deeplivecam_root(installed):
+            self.settings["deeplivecam_root"] = str(installed.resolve())
+        elif str(self.settings.get("deeplivecam_root") or "").strip():
+            current = Path(str(self.settings.get("deeplivecam_root"))).expanduser()
+            if not looks_like_deeplivecam_root(current):
+                self.settings["deeplivecam_root"] = ""
+        report = assess_instant_environment(self.settings)
+        if report.ready:
+            self._apply_env_report(report)
+            QMessageBox.information(
+                self,
+                "环境监测",
+                "安装完成，换脸路径已写入。\n\n" + report.summary_zh(),
+            )
+            return
+        QMessageBox.warning(
+            self,
+            "环境监测",
+            f"安装结束（退出码 {code}），仍有缺项。\n\n" + report.summary_zh(),
+        )
+
+    def _on_session_changed(self, _index: int = 0) -> None:
+        data = self.session_combo.currentData()
+        if data:
+            self.settings["dlc_session"] = data
+
+    def _sync_session_combo(self) -> None:
+        session = self.settings.get("dlc_session") or "preview"
+        idx = self.session_combo.findData(session)
+        if idx >= 0 and idx != self.session_combo.currentIndex():
+            self.session_combo.blockSignals(True)
+            self.session_combo.setCurrentIndex(idx)
+            self.session_combo.blockSignals(False)
+
+    def _refresh_face_label(self) -> None:
+        pinned = str(self.settings.get("instant_source_face") or "")
+        if pinned and Path(pinned).is_file():
+            self.face_label.setText(Path(pinned).name)
+            return
+        paths = self._asset_paths()
+        if paths:
+            self.face_label.setText(Path(paths[0]).name)
+            return
+        self.face_label.setText("未选择源脸")
+
+    def _choose_source_face(self) -> None:
+        if self.current and not self.current.consent_checklist_acked:
+            QMessageBox.warning(
+                self,
+                "授权未确认",
+                "选择即用脸图前请勾选「我已确认授权清单」。",
+            )
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "选择即用源脸",
+            "",
+            "Images (*.png *.jpg *.jpeg *.webp *.bmp);;All (*.*)",
+        )
+        if not path:
+            return
+        self.settings["instant_source_face"] = path
+        if self.current and self.current.consent_checklist_acked:
+            self.current = self.store.add_asset(
+                self.current,
+                path,
+                label=Path(path).stem,
+                consent_confirmed=True,
+            )
+            self.log.record("asset_import", project=self.current.name, path=path, via="instant")
+            self._reload_assets()
+        self.log.record("instant_source_face", path=path)
+        self._refresh_face_label()
+
+    def _should_prompt_activation(self) -> bool:
+        if self.license.allows_preview():
+            return False
+        if os.environ.get("FSS_SMOKE") == "1":
+            return False
+        if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
+            return False
+        return True
+
+    def _prompt_activation(self) -> None:
+        """Activate UI. Startup schedules the same dialog when the seat is locked."""
+        if self.license.allows_preview():
+            self._sync_activation_ui()
+            return
+        code, ok = QInputDialog.getText(
+            self,
+            "激活",
+            "输入试用激活码（FS-1D 一天 / FS-30D 三十天）。\n"
+            "正式年费仍走 USDT。试用到期不会升级 Pro。",
+        )
+        if not ok or not str(code).strip():
+            self._sync_activation_ui()
+            return
+        try:
+            result = self.license.activate_code(str(code))
+        except ValueError as exc:
+            self.log.record("activation_fail", reason=str(exc))
+            QMessageBox.warning(self, "激活失败", str(exc))
+            self._sync_activation_ui()
+            return
+        self.log.record(
+            "activation_ok",
+            duration_days=result["duration_days"],
+            expires_at=result["expires_at"],
+        )
+        QMessageBox.information(
+            self,
+            "已激活",
+            f"试用 {result['duration_days']} 天，到期 {result['expires_at']}。\n"
+            "到期后回到未激活，不会自动升级 Pro。",
+        )
+        self._on_mode_changed()
+
+    def _sync_activation_ui(self) -> None:
+        unlocked = self.license.allows_preview()
+        self.btn_activate.setEnabled(True)
+        self.btn_export.setEnabled(unlocked)
+        self.btn_start.setEnabled(unlocked and not self._previewing)
+        if self._previewing:
+            return
+        if not unlocked:
+            self.preview_label.setText(_LOCKED_PREVIEW_ZH)
+        self.statusBar().showMessage(self._activation_status_text())
+
+    def _activation_status_text(self) -> str:
+        mode_val = self.mode_combo.currentData()
+        try:
+            mode = WorkMode(mode_val)
+        except ValueError:
+            mode = WorkMode.SIMPLE
+        state = self.license.state
+        if state.usdt_paid():
+            lic = f"USDT {state.tier.value} 已开通"
+        elif state.trial_current():
+            lic = f"试用至 {_format_expiry(state.expires_at)}"
+        else:
+            lic = "未激活"
+        return f"{MODE_LABELS_ZH[mode]} | {lic}"
+
+    def _pro_license_ok(self, *, notify: bool) -> bool:
+        if self.license.state.allows_pro_dfm():
+            return True
+        if notify:
+            QMessageBox.information(self, "授权提示", self._pro_license_message())
+        return False
+
+    def _pro_license_message(self) -> str:
+        return (
+            "专模（DeepFaceLive · .dfm）需要 Pro/Studio 且 USDT 开授权后启用。\n"
+            f"当前档位: {self.license.state.tier.value} active={self.license.state.active}"
+        )
+
+    def _sync_dfm_label(self) -> None:
+        dfm = str(self.settings.get("dfm_path") or "")
+        if not dfm:
+            self.dfm_label.setText("未选择 .dfm")
+            return
+        name = Path(dfm).name
+        if Path(dfm).is_file():
+            self.dfm_label.setText(name)
+        else:
+            self.dfm_label.setText(f"{name}（文件不存在）")
+
+    def _ensure_dfm_selected(self) -> bool:
+        """专模 requires an existing .dfm. Returns False if the user does not pick one."""
+        dfm = str(self.settings.get("dfm_path") or "")
+        if dfm and Path(dfm).is_file():
+            self._sync_dfm_label()
+            return True
+        self._choose_dfm()
+        dfm = str(self.settings.get("dfm_path") or "")
+        if dfm and Path(dfm).is_file():
+            return True
+        QMessageBox.information(
+            self,
+            "需要 .dfm",
+            "专模模式使用本机 DeepFaceLive，请先选择已有的 .dfm 文件。",
+        )
+        return False
 
     def _choose_dfm(self) -> None:
         path, _ = QFileDialog.getOpenFileName(
@@ -458,7 +995,7 @@ class MainWindow(QMainWindow):
         if not path:
             return
         self.settings["dfm_path"] = path
-        self.dfm_label.setText(Path(path).name)
+        self._sync_dfm_label()
         self.log.record("dfm_selected", path=path)
 
     def closeEvent(self, event) -> None:  # noqa: N802
