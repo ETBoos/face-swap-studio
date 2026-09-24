@@ -30,6 +30,22 @@ PROVIDER_NAMES = {
 }
 
 
+def preload_onnxruntime_dlls(onnxruntime_module: Any, runtime_bin: Path | None = None) -> None:
+    """Load Conda CUDA/cuDNN DLLs before ONNX Runtime creates a session.
+
+    ``os.add_dll_directory`` makes imported extension modules discoverable, but
+    ONNX Runtime loads its CUDA provider and that provider's dependencies at a
+    later point.  Frozen Windows applications therefore need the provider
+    dependencies loaded explicitly from the selected Conda environment.
+    """
+    if sys.platform != "win32" and runtime_bin is None:
+        return
+    directory = runtime_bin or Path(sys.prefix) / "Library/bin"
+    preload = getattr(onnxruntime_module, "preload_dlls", None)
+    if directory.is_dir() and callable(preload):
+        preload(cuda=True, cudnn=True, msvc=False, directory=str(directory))
+
+
 def validate_local_hashes(hash_set: dict[str, Any]) -> bool:
     for entry in hash_set.values():
         path = Path(entry["path"])
@@ -101,6 +117,7 @@ class FaceFusionPipeline:
         import onnxruntime
         from facefusion import download, metadata, state_manager
 
+        preload_onnxruntime_dlls(onnxruntime)
         if metadata.get("version") != SUPPORTED_VERSION:
             raise RuntimeError("FaceFusion Python 实际导入的版本不是 3.9.0；请检查安装目录和环境")
         if config["model"] not in SUPPORTED_MODELS or config["provider"] not in PROVIDER_NAMES:

@@ -31,7 +31,10 @@ from face_swap_studio.engines.facefusion_protocol import (
     read_message,
     write_message,
 )
-from face_swap_studio.engines.facefusion_worker import validate_local_sources
+from face_swap_studio.engines.facefusion_worker import (
+    preload_onnxruntime_dlls,
+    validate_local_sources,
+)
 
 
 def eventually(predicate, timeout=8):
@@ -296,6 +299,25 @@ def test_model_hash_failure_preserves_file(install):
     with pytest.raises(RuntimeError, match="校验不通过"):
         validate_local_sources({"m": {"path": str(model)}})
     assert model.read_bytes() == b"corrupt model"
+
+
+def test_worker_preloads_cuda_dlls_from_selected_runtime(tmp_path):
+    runtime_bin = tmp_path / "Library" / "bin"
+    runtime_bin.mkdir(parents=True)
+    calls = []
+
+    class FakeOnnxRuntime:
+        @staticmethod
+        def preload_dlls(**kwargs):
+            calls.append(kwargs)
+
+    preload_onnxruntime_dlls(FakeOnnxRuntime, runtime_bin)
+    assert calls == [{
+        "cuda": True,
+        "cudnn": True,
+        "msvc": False,
+        "directory": str(runtime_bin),
+    }]
 
 
 def test_stopped_generation_cannot_restore_old_output(engine, install):
