@@ -44,7 +44,6 @@ def default_settings() -> dict[str, Any]:
         "engine": "placeholder",
         "work_mode": "simple",
         "dfm_path": "",
-        "facefusion_root": "",
         "deepfacelive_root": "",
         "userdata_dir": "",
         "deeplivecam_root": "",
