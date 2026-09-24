@@ -48,9 +48,9 @@ from face_swap_studio.core.studio_settings import (
     save_settings,
 )
 from face_swap_studio.core.usage_log import UsageLog
+from face_swap_studio.engines import create_engine
 from face_swap_studio.engines.base import EngineStatus
 from face_swap_studio.engines.config_builder import build_engine_config
-from face_swap_studio.engines.deepfacelive_stub import create_engine
 from face_swap_studio.engines.lifecycle import replace_engine, shutdown_engine
 from face_swap_studio.engines.modes import MODE_ENGINE_IDS, MODE_LABELS_ZH, WorkMode
 from face_swap_studio.licensing.store import LicenseStore

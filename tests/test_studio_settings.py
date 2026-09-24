@@ -12,6 +12,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from face_swap_studio.core.studio_settings import (
     DLC_SETUP_OFFER_ZH,
+    default_settings,
     ensure_deeplivecam_root,
     find_setup_all_script,
     launch_setup_script,
@@ -131,6 +132,16 @@ def test_cli_rejects_non_dlc_and_writes_real_root(
     assert data["deeplivecam_root"] == str(root.resolve())
     assert data["engine"] == "deepfacelive"
     assert data["dfm_path"] == "a.dfm"
+
+
+def test_defaults_drop_launched_facefusion_root(tmp_path: Path) -> None:
+    assert "facefusion_root" not in default_settings()
+    dest = tmp_path / "settings.json"
+    dest.write_text(json.dumps({"facefusion_root": r"D:\FaceFusion"}), encoding="utf-8")
+    loaded = load_settings(dest)
+    # Existing files keep the unused key; new defaults must not reintroduce it.
+    assert loaded["facefusion_root"] == r"D:\FaceFusion"
+    assert "facefusion_root" not in default_settings()
 
 
 def test_corrupt_settings_do_not_crash(tmp_path: Path) -> None:

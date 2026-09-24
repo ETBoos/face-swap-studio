@@ -12,7 +12,6 @@ from face_swap_studio.engines.base import EngineConfig
 from face_swap_studio.engines.config_builder import build_engine_config
 from face_swap_studio.engines.deepfacelive import DeepFaceLiveEngine, create_engine
 from face_swap_studio.engines.deeplivecam import DeepLiveCamEngine
-from face_swap_studio.engines.facefusion_stub import FaceFusionStubEngine
 from face_swap_studio.engines.modes import MODE_ENGINE_IDS, WorkMode
 
 
@@ -21,7 +20,7 @@ def test_pro_mode_routes_to_deepfacelive_not_facefusion_or_dlc():
     assert isinstance(pro, DeepFaceLiveEngine)
     assert pro.capabilities().name == "deepfacelive"
     assert pro.capabilities().is_stub is False
-    assert not isinstance(pro, (FaceFusionStubEngine, DeepLiveCamEngine))
+    assert not isinstance(pro, DeepLiveCamEngine)
     assert isinstance(create_engine("pro"), DeepFaceLiveEngine)
     assert isinstance(create_engine("dfl"), DeepFaceLiveEngine)
 
@@ -29,10 +28,11 @@ def test_pro_mode_routes_to_deepfacelive_not_facefusion_or_dlc():
     assert isinstance(instant, DeepLiveCamEngine)
     assert instant.capabilities().name == "deeplivecam"
     assert instant.capabilities().is_stub is False
-    # Legacy id stays on the instant path and must not construct the FaceFusion stub.
-    legacy = create_engine("facefusion")
-    assert isinstance(legacy, DeepLiveCamEngine)
-    assert not isinstance(legacy, FaceFusionStubEngine)
+    # Legacy ids stay on the instant path after the FaceFusion stub was deleted.
+    for legacy_id in ("facefusion", "ff", "simple"):
+        legacy = create_engine(legacy_id)
+        assert isinstance(legacy, DeepLiveCamEngine)
+        assert legacy.capabilities().name == "deeplivecam"
 
 
 def test_pro_config_keeps_dfm_root_and_userdata():
