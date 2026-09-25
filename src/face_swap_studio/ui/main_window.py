@@ -39,7 +39,7 @@ from face_swap_studio.core.project import ProjectMeta, ProjectStore
 from face_swap_studio.core.usage_log import UsageLog
 from face_swap_studio.engines.base import EngineFrame
 from face_swap_studio.engines.config_builder import build_engine_config
-from face_swap_studio.engines.deepfacelive_stub import create_engine
+from face_swap_studio.engines import create_engine
 from face_swap_studio.engines.lifecycle import shutdown_engine
 from face_swap_studio.licensing.store import LicenseStore
 from face_swap_studio.ui.activation_dialog import ActivationDialog
