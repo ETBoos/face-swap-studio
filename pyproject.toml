@@ -1,6 +1,6 @@
 [project]
 name = "face-swap-studio"
-version = "0.2.0a3"
+version = "0.2.0a2"
 description = "FaceSwap Studio — local real-time face swap for video calls and streaming"
 readme = "README.md"
 requires-python = ">=3.11"

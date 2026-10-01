@@ -10,7 +10,7 @@ import pytest
 def test_version():
     from face_swap_studio import __version__
 
-    assert __version__ == "0.2.0a3"
+    assert __version__ == "0.2.0a2"
 
 
 def test_consent_banner():

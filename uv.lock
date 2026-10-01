@@ -180,7 +180,7 @@ wheels = [
 
 [[package]]
 name = "face-swap-studio"
-version = "0.2.0a3"
+version = "0.2.0a2"
 source = { editable = "." }
 dependencies = [
     { name = "cryptography" },
