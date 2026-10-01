@@ -915,7 +915,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "输出检查",
-            "1. 先确认本机真实换脸画面。\n2. 安装随软件提供的 FaceSwap Studio Camera 组件，点击「开始输出」。\n3. 在通话或直播软件中选择 FaceSwap Studio Camera。\n4. 请对方确认收到正确画面、声音和嘴型。\n\n软件中的输出就绪不等于目标平台兼容性已验证。此版本的专属模型仅外部启动，不能从本程序输出。",
+            "1. 先确认本机真实换脸画面。\n2. 安装随软件提供的 FaceSwap Studio Camera 组件，点击「开始输出」。\n3. 在通话或直播软件中选择 FaceSwap Studio Camera。\n4. 请对方确认收到正确画面、声音和嘴型。\n\n软件中的输出就绪不等于目标平台兼容性已验证。照片模式和专业人物模型模式都需先在本程序中确认换脸预览，再手动开始输出。",
         )
 
     def _refresh_project_list(self):
