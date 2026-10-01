@@ -38,6 +38,20 @@ try {
     if (-not (Test-Path $InstalledGuide)) { throw "Installer did not install the configuration guide." }
     & $PythonExe "scripts\smoke-windows-package.py" $InstalledExe --report "$ReportsDir\installed-smoke.json" --data-dir (Split-Path $DataMarker)
     if ($LASTEXITCODE -ne 0) { throw "Installed application smoke test failed." }
+    # Same-version reinstalls must replace the worker code, not preserve an old build.
+    $InstalledWorker = Join-Path $InstallDir "_internal\face_swap_studio\engines\deepfacelive_worker.py"
+    $WorkerHash = (Get-FileHash $InstalledWorker -Algorithm SHA256).Hash
+    Set-Content $InstalledWorker "# Simulated previous worker build"
+    Invoke-InstallerProcess $Installer @(
+        "/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
+        "/DIR=`"$InstallDir`"", "/LOG=`"$ReportsDir\reinstall.log`""
+    )
+    if ((Get-FileHash $InstalledWorker -Algorithm SHA256).Hash -ne $WorkerHash) {
+        throw "Same-version reinstall did not replace the worker code."
+    }
+    if (-not (Test-Path $DataMarker)) { throw "Reinstall removed external user data." }
+    & $PythonExe "scripts\smoke-windows-package.py" $InstalledExe --report "$ReportsDir\reinstalled-smoke.json" --data-dir (Split-Path $DataMarker)
+    if ($LASTEXITCODE -ne 0) { throw "Reinstalled application smoke test failed." }
     $StartShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "FaceSwap Studio\FaceSwap Studio.lnk"
     if (-not (Test-Path $StartShortcut)) { throw "Start menu shortcut was not created." }
     $GuideShortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "FaceSwap Studio\安装配置教学.lnk"
@@ -49,7 +63,7 @@ try {
     if (Test-Path $StartShortcut) { throw "Uninstaller left the start menu shortcut." }
     if (Test-Path $GuideShortcut) { throw "Uninstaller left the configuration guide shortcut." }
     if (-not (Test-Path $DataMarker)) { throw "Uninstaller removed external user data." }
-    @{ passed = $true; install = $true; launch = $true; uninstall = $true; retained_external_data = $true } |
+    @{ passed = $true; install = $true; launch = $true; same_version_overwrite = $true; uninstall = $true; retained_external_data = $true } |
         ConvertTo-Json | Set-Content "$ReportsDir\installer-test.json" -Encoding utf8
     Remove-Item $TestRoot -Recurse -Force
 }
