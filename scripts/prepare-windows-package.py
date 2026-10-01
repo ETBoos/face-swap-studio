@@ -66,6 +66,7 @@ def prepare(output: Path) -> None:
     if notices.exists():
         shutil.rmtree(notices)
     notices.mkdir()
+    shutil.copytree(ROOT / "third_party/deepfacelive", notices / "deepfacelive")
     manifest = []
     for dist in runtime_distributions():
         name = dist.metadata["Name"]

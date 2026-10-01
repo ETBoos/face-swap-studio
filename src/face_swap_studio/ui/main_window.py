@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QMainWindow,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QScrollArea,
     QSplitter,
@@ -293,6 +294,12 @@ class MainWindow(QMainWindow):
             "background:#151c28;color:#b8c6da;border-radius:10px;padding:12px;"
         )
         right_layout.addWidget(self.preview_label, 1)
+        self.loading_bar = QProgressBar()
+        self.loading_bar.setRange(0, 0)
+        self.loading_bar.setTextVisible(False)
+        self.loading_bar.setFixedHeight(5)
+        self.loading_bar.hide()
+        right_layout.addWidget(self.loading_bar)
         self.engine_info = QLabel()
         self.engine_info.setWordWrap(True)
         right_layout.addWidget(self.engine_info)
@@ -321,6 +328,7 @@ class MainWindow(QMainWindow):
 
     def _set_state(self, state, message):
         self.session_state = state
+        self.loading_bar.setVisible(state in ("starting", "waiting"))
         labels = {
             "idle": "准备开始",
             "starting": "正在准备引擎",
@@ -362,7 +370,7 @@ class MainWindow(QMainWindow):
         self.mode_hint.setText(
             {
                 "simple": "默认 720p，最高 1080p。需要兼容的 FaceFusion 环境与已获许可模型；缺少依赖时会提示具体原因。",
-                "pro": "适合反复使用的固定人物。当前通过专业模型窗口运行，需要 Pro / Studio 授权。",
+                "pro": "适合反复使用的固定人物。选择 DFM 后在这里直接预览，需要 Pro / Studio 授权。",
                 "demo": "仅检查摄像头和界面，不进行换脸，不允许开始输出。",
             }[mode]
         )
@@ -660,7 +668,6 @@ class MainWindow(QMainWindow):
         capabilities = engine.capabilities()
         if (
             getattr(capabilities, "preview_mode", "internal") == "external"
-            or self.settings["work_mode"] == "pro"
         ):
             self.preview_label.setText(
                 "请在 DeepFaceLive 外部窗口选择模型并检查画面\n\n本程序尚未接收其视频帧，不能在这里开始输出。"
@@ -695,12 +702,14 @@ class MainWindow(QMainWindow):
         self.log.record("preview_stop")
 
     def _fail_preview(self, message):
+        diagnostic = getattr(self.engine, "diagnostic_tail", lambda: "")() if self.engine else ""
         self._stop_preview()
         self._set_state("error", "引擎未能继续预览。处理原因后可重试。")
         self._notice(
             f"{message}\n可到「画面与引擎设置」检查安装路径、模型和设备；诊断日志：{self.log.path}"
         )
-        self.log.record("preview_error", error=message, engine=self.settings["engine"])
+        self.log.record("preview_error", error=message, engine=self.settings["engine"],
+                        diagnostic_tail=diagnostic[-8192:])
 
     def _is_real_frame(self, frame):
         if frame is None or self.engine is None:
@@ -724,6 +733,13 @@ class MainWindow(QMainWindow):
     def _on_tick(self):
         if not self._previewing or self.engine is None:
             return
+        if self.settings["work_mode"] == "pro" and not self.license.state.allows_pro_dfm():
+            self._stop_preview()
+            self._sync_license_ui()
+            self._notice("专业模型授权已失效，预览与输出已停止；请重新激活后继续。")
+            return
+        if self.output and not self.license.state.allows_output():
+            self._pause_output("输出授权已失效，请重新激活后继续。")
         now = self._clock()
         timeout = float(self.settings["facefusion_startup_timeout"])
         if self._starting_job:
@@ -741,6 +757,10 @@ class MainWindow(QMainWindow):
                 return
             if self.session_state == "external":
                 return
+            if self.session_state == "waiting" and self._last_frame is None:
+                message = getattr(self.engine, "loading_message", lambda: "")()
+                if message:
+                    self.preview_label.setText(f"FaceSwap Studio\n\n{message}")
             frame = self.engine.read_frame()
             if frame is not None:
                 frame_id = (frame.meta or {}).get("frame_id")
@@ -760,6 +780,17 @@ class MainWindow(QMainWindow):
                         if first:
                             self.log.record("real_preview_ready")
                         if (
+                            (frame.meta or {}).get("stage_ms")
+                            and now - getattr(self, "_last_engine_metrics_at", 0) >= 10
+                        ):
+                            self._last_engine_metrics_at = now
+                            self.log.record(
+                                "engine_performance", fps=frame.fps,
+                                stage_ms=frame.meta["stage_ms"],
+                                processing_ms=frame.meta.get("processing_ms"),
+                                capture_to_processed_ms=frame.meta.get("capture_to_processed_ms"),
+                            )
+                        if (
                             self.output
                             and _value(self.output.status()) == "running"
                             and not self.output.send(frame)
@@ -778,7 +809,7 @@ class MainWindow(QMainWindow):
                             (frame.meta or {}).get("reason")
                             or "暂未检测到可用的换脸画面，输出已暂停。"
                         )
-                        self._set_state("waiting", "请正对摄像头，等待可用的换脸画面。")
+                        self._set_state("waiting", (frame.meta or {}).get("reason") or "请正对摄像头，等待可用的换脸画面。")
             if (
                 self.session_state == "waiting"
                 and self._last_real_frame is None
@@ -855,6 +886,10 @@ class MainWindow(QMainWindow):
 
     def _sync_output_status(self):
         if self.output is None:
+            if self.session_state == "previewing":
+                self.output_info.setText(
+                    "本机预览已就绪，尚未输出。点击「开始输出」，并在通话软件中选择 FaceSwap Studio Camera。"
+                )
             return
         status = _value(self.output.status())
         if status == "running" and getattr(self.output, "receiver_connected", True) is False:
@@ -870,9 +905,12 @@ class MainWindow(QMainWindow):
                 f"输出失败：{self.output.last_error()}。检查虚拟摄像头安装与设备占用后，可重新开始输出。"
             )
         elif status == "paused":
-            self.output_info.setText(
-                self.output.last_error() or "输出已暂停。确认预览后手动重新开始。"
-            )
+            if self._real_frame_ready() and self.license.state.allows_output():
+                self.output_info.setText("本机预览已恢复，输出仍暂停。确认画面后点击「开始输出」。")
+            else:
+                self.output_info.setText(
+                    self.output.last_error() or "输出已暂停。确认预览后手动重新开始。"
+                )
 
     def _install_output_component(self):
         if sys.platform != "win32":
@@ -895,7 +933,7 @@ class MainWindow(QMainWindow):
         QMessageBox.information(
             self,
             "输出检查",
-            "1. 先确认本机真实换脸画面。\n2. 安装随软件提供的 FaceSwap Studio Camera 组件，点击「开始输出」。\n3. 在通话或直播软件中选择 FaceSwap Studio Camera。\n4. 请对方确认收到正确画面、声音和嘴型。\n\n软件中的输出就绪不等于目标平台兼容性已验证。此版本的专属模型仅外部启动，不能从本程序输出。",
+            "1. 先确认本机真实换脸画面。\n2. 安装随软件提供的 FaceSwap Studio Camera 组件，点击「开始输出」。\n3. 在通话或直播软件中选择 FaceSwap Studio Camera。\n4. 请对方确认收到正确画面、声音和嘴型。\n\n软件中的输出就绪不等于目标平台兼容性已验证。照片模式和专业人物模型模式都需先在本程序中确认换脸预览，再手动开始输出。",
         )
 
     def _refresh_project_list(self):

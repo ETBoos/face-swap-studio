@@ -1,33 +1,27 @@
-"""DeepFaceLive adapter — PRO mode (load .dfm).
+"""DFM adapter for a headless worker in an installed DeepFaceLive NVIDIA runtime.
 
-Official portable NVIDIA layout (iperov WindowsBuilder):
-  <root>/DeepFaceLive.bat
-  <root>/userdata/dfm_models/
-  <root>/_internal/CUDA/bin/*.dll
-  <root>/_internal/python/python.exe
-  <root>/_internal/DeepFaceLive/main.py
-
-Official DeepFaceLive.bat hardcodes --userdata-dir="%~dp0userdata".
-When userdata_dir is customized we must launch via python + --userdata-dir.
+Legacy launcher helpers remain available for setup diagnostics only; the Pro
+engine never calls them or opens the upstream GUI.
 """
 
 from __future__ import annotations
 
+import copy
+import math
 import os
 import shutil
-import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Optional
 
 from face_swap_studio.engines.base import (
     EngineCapabilities,
     EngineConfig,
-    EngineFrame,
     EngineStatus,
     FaceSwapEngine,
 )
+
+from .facefusion import IsolatedWorkerEngine, _worker_env
 
 _LAUNCHERS = (
     "DeepFaceLive.bat",
@@ -55,21 +49,13 @@ class DfmCheck:
     size_bytes: int = 0
 
 
-def resolve_deepfacelive_root(explicit: Optional[str] = None) -> Optional[Path]:
+def resolve_deepfacelive_root(explicit: str | None = None) -> Path | None:
     """Find DeepFaceLive install directory (NVIDIA paths preferred in order)."""
-    candidates: list[Path] = []
-    if explicit:
-        candidates.append(Path(explicit))
-    env = os.environ.get("DEEPFACELIVE_ROOT") or os.environ.get("DFL_ROOT")
-    if env:
-        candidates.append(Path(env))
-    for base in (
-        Path(r"C:\DeepFaceLive_NVIDIA"),
-        Path.home() / "DeepFaceLive_NVIDIA",
-        Path(r"C:\DeepFaceLive"),
-        Path.home() / "DeepFaceLive",
-    ):
-        candidates.append(base)
+    selected = explicit or os.environ.get("DEEPFACELIVE_ROOT") or os.environ.get("DFL_ROOT")
+    candidates = [Path(selected)] if selected else [
+        Path("C:/DeepFaceLive_NVIDIA"), Path.home() / "DeepFaceLive_NVIDIA",
+        Path("C:/DeepFaceLive"), Path.home() / "DeepFaceLive",
+    ]
     for root in candidates:
         if not root:
             continue
@@ -85,11 +71,7 @@ def _looks_like_dfl_root(root: Path) -> bool:
     # Official portable: launcher may sit beside _internal only
     if (root / "_internal" / "DeepFaceLive" / "main.py").is_file():
         return True
-    if (root / "_internal" / "python" / "python.exe").is_file() and (
-        root / "DeepFaceLive.bat"
-    ).is_file():
-        return True
-    return False
+    return bool((root / "_internal" / "python" / "python.exe").is_file() and (root / "DeepFaceLive.bat").is_file())
 
 
 def _iter_scan_files(root: Path, *, max_files: int = 400) -> list[Path]:
@@ -208,7 +190,7 @@ def detect_build_kind(root: Path) -> BuildInfo:
 def validate_dfm_file(
     path: Path,
     *,
-    expected_hint: Optional[str] = None,
+    expected_hint: str | None = None,
 ) -> DfmCheck:
     if not path.is_file():
         return DfmCheck(False, f"找不到 .dfm 文件：{path}")
@@ -224,7 +206,8 @@ def validate_dfm_file(
             size,
         )
 
-    head = path.read_bytes()[:4096]
+    with path.open("rb") as stream:
+        head = stream.read(4096)
     looks_onnx = (b"onnx" in head.lower()) or head.startswith(b"\x08")
     if not looks_onnx:
         return DfmCheck(
@@ -244,23 +227,22 @@ def validate_dfm_file(
 
     if hint:
         stem = path.stem.lower()
-        if hint.lower() not in stem and hint.lower() not in path.name.lower():
-            if not (
-                sidecar.is_file()
-                and sidecar.read_text(encoding="utf-8", errors="ignore").strip() == hint
-            ):
-                return DfmCheck(
-                    False,
-                    f".dfm 版本提示不匹配：期望「{hint}」，文件名为「{path.name}」。"
-                    "DeepFaceLive 加载失败时多数是「导出 DFL 版本 ≠ 本机 DFL 版本」。"
-                    "请用同一代 DeepFaceLab 重新导出，或更换匹配的 DeepFaceLive NVIDIA 包。",
-                    size,
-                )
+        if hint.lower() not in stem and hint.lower() not in path.name.lower() and not (
+            sidecar.is_file()
+            and sidecar.read_text(encoding="utf-8", errors="ignore").strip() == hint
+        ):
+            return DfmCheck(
+                False,
+                f".dfm 版本提示不匹配：期望「{hint}」，文件名为「{path.name}」。"
+                "DeepFaceLive 加载失败时多数是「导出 DFL 版本 ≠ 本机 DFL 版本」。"
+                "请用同一代 DeepFaceLab 重新导出，或更换匹配的 DeepFaceLive NVIDIA 包。",
+                size,
+            )
 
     return DfmCheck(True, "ok", size)
 
 
-def _userdata_dir(root: Path, override: Optional[str] = None) -> Path:
+def _userdata_dir(root: Path, override: str | None = None) -> Path:
     if override:
         return Path(override).expanduser().resolve()
     ud = root / "userdata"
@@ -277,7 +259,7 @@ def stage_dfm(dfm_path: Path, userdata: Path) -> Path:
     return dest
 
 
-def _official_python(root: Path) -> Optional[Path]:
+def _official_python(root: Path) -> Path | None:
     for cand in (
         root / "_internal" / "python" / "python.exe",
         root / "_internal" / "python" / "python",
@@ -288,7 +270,7 @@ def _official_python(root: Path) -> Optional[Path]:
     return None
 
 
-def _official_main_py(root: Path) -> Optional[Path]:
+def _official_main_py(root: Path) -> Path | None:
     for cand in (
         root / "_internal" / "DeepFaceLive" / "main.py",
         root / "DeepFaceLive" / "main.py",
@@ -376,168 +358,85 @@ def launch_env(root: Path) -> dict[str, str]:
     return env
 
 
-class DeepFaceLiveEngine(FaceSwapEngine):
-    """Launch DeepFaceLive with a staged .dfm; preview stays in DFL's own window."""
+class DeepFaceLiveEngine(IsolatedWorkerEngine):
+    """Run DFM inference in a hidden worker; the application owns all UI."""
 
-    def __init__(self) -> None:
-        self._cfg: Optional[EngineConfig] = None
-        self._status = EngineStatus.STUB
-        self._error: Optional[str] = None
-        self._dfm: Optional[Path] = None
-        self._staged: Optional[Path] = None
-        self._root: Optional[Path] = None
-        self._userdata: Optional[Path] = None
-        self._build: Optional[BuildInfo] = None
-        self._launch_cmd: Optional[list[str]] = None
-        self._proc: Optional[subprocess.Popen] = None
+    worker_filename = "deepfacelive_worker.py"
+    engine_version = "dfl-headless-1"
+    display_name = "专用模型引擎"
 
     def capabilities(self) -> EngineCapabilities:
         return EngineCapabilities(
-            name="deepfacelive",
-            version="0.4.0",
-            supports_live_camera=True,
-            supports_gpu=True,
-            notes=(
-                "专用模型：识别官方 _internal/CUDA 便携包；自定义 userdata 走 python "
-                "--userdata-dir；.dfm 预检后写入 userdata/dfm_models。"
-                "RUNNING≠已加载模型≠首帧；需在 DFL UI 选 Face swapper。"
-            ),
-            is_stub=False,
-            preview_mode="external",
+            name="deepfacelive", version=self.engine_version,
+            supports_live_camera=True, supports_gpu=True, is_stub=False,
+            preview_mode="internal",
+            notes="本机 DFM 推理与实时预览；需 NVIDIA 便携引擎。效果与速度需真机验收。",
         )
-
-    def status(self) -> EngineStatus:
-        if self._proc is not None and self._proc.poll() is not None:
-            code = self._proc.returncode
-            self._proc = None
-            if self._status == EngineStatus.RUNNING:
-                if code and code != 0:
-                    self._status = EngineStatus.ERROR
-                    self._error = f"DeepFaceLive 进程退出 code={code}"
-                else:
-                    self._status = EngineStatus.READY
-        return self._status
 
     def initialize(self, config: EngineConfig) -> None:
-        self._cfg = config
-        self._error = None
-        self._launch_cmd = None
-
-        dfm_raw = (config.extra.get("dfm_path") or "").strip()
-        if not dfm_raw:
-            self._status = EngineStatus.ERROR
-            self._error = "顶级模式需要有效的 .dfm 文件路径（extra.dfm_path）"
-            raise RuntimeError(self._error)
-
-        path = Path(dfm_raw).expanduser()
-        check = validate_dfm_file(
-            path,
-            expected_hint=(config.extra.get("dfm_version_hint") or None),
-        )
-        if not check.ok:
-            self._status = EngineStatus.ERROR
-            self._error = check.message
-            raise RuntimeError(self._error)
-        self._dfm = path.resolve()
-
-        root = resolve_deepfacelive_root(config.extra.get("deepfacelive_root"))
-        if root is None:
-            self._status = EngineStatus.ERROR
-            self._error = (
-                "未找到 DeepFaceLive 安装目录。请安装 **NVIDIA 构建**，并设置 "
-                "extra.deepfacelive_root 或环境变量 DEEPFACELIVE_ROOT"
-                "（目录内需有 DeepFaceLive.bat 或 _internal/DeepFaceLive/main.py）。"
-            )
-            raise RuntimeError(self._error)
-        self._root = root
-
-        build = detect_build_kind(root)
-        self._build = build
-        require_nvidia = config.extra.get("require_nvidia")
-        if require_nvidia is None:
-            require_nvidia = True
-        if require_nvidia and build.kind == "dx12":
-            self._status = EngineStatus.ERROR
-            self._error = (
-                "检测到 DeepFaceLive **DX12/DirectML 构建**，顶级实时请改用 **NVIDIA 构建**。"
-                f"依据：{build.evidence}。provider={build.provider}。安装目录：{root}"
-            )
-            raise RuntimeError(self._error)
-        if require_nvidia and build.kind == "unknown":
-            allow_unknown = bool(config.extra.get("allow_unknown_build"))
-            if not allow_unknown:
-                self._status = EngineStatus.ERROR
-                self._error = (
-                    "无法确认是否为 NVIDIA 构建。"
-                    f"{build.evidence}。请指向含 _internal/CUDA/bin 的官方 NVIDIA 便携包，"
-                    f"或设 allow_unknown_build=true（不推荐）。目录：{root}"
-                )
-                raise RuntimeError(self._error)
-
-        ud_override = config.extra.get("userdata_dir")
-        self._userdata = _userdata_dir(root, ud_override)
-        self._staged = stage_dfm(self._dfm, self._userdata)
-
-        no_cuda = bool(config.extra.get("no_cuda"))
-        self._launch_cmd = build_launch_command(
-            root, self._userdata, no_cuda=no_cuda
-        )
-
-        self._status = EngineStatus.READY
-        self._error = None
-
-    def start(self) -> None:
-        if self._status not in (EngineStatus.READY, EngineStatus.RUNNING):
-            raise RuntimeError(self._error or "引擎未就绪")
-        if self._proc is not None and self._proc.poll() is None:
-            self._status = EngineStatus.RUNNING
-            return
-        assert self._root is not None and self._userdata is not None
-        cmd = self._launch_cmd or build_launch_command(self._root, self._userdata)
+        self.stop()
+        with self._lock:
+            self._cfg = self._worker_config = None
+            self._status, self._error = EngineStatus.ERROR, None
         try:
-            self._proc = subprocess.Popen(
-                cmd,
-                cwd=str(self._root),
-                env=launch_env(self._root),
-            )
-        except OSError as exc:
-            self._status = EngineStatus.ERROR
-            self._error = f"无法启动 DeepFaceLive：{exc}；cmd={cmd}"
-            raise RuntimeError(self._error) from exc
-
-        self._status = EngineStatus.RUNNING
-
-    def stop(self) -> None:
-        if self._proc is not None and self._proc.poll() is None:
-            self._proc.terminate()
-            try:
-                self._proc.wait(timeout=8)
-            except subprocess.TimeoutExpired:
-                self._proc.kill()
-                try:
-                    self._proc.wait(timeout=3)
-                except subprocess.TimeoutExpired:
-                    pass
-        self._proc = None
-        if self._status == EngineStatus.RUNNING:
+            cfg = copy.deepcopy(config)
+            raw = str(cfg.extra.get("dfm_path") or "").strip()
+            if not raw:
+                raise ValueError("请选择已经导出的 .dfm 专用模型")
+            dfm = Path(raw).expanduser().resolve()
+            check = validate_dfm_file(dfm)
+            if not check.ok:
+                raise ValueError(check.message)
+            root = resolve_deepfacelive_root(cfg.extra.get("deepfacelive_root"))
+            if root is None:
+                raise ValueError("未找到专用模型引擎；请选择解压后的 DeepFaceLive NVIDIA 安装目录")
+            if detect_build_kind(root).kind != "nvidia":
+                raise ValueError("此版本需要 NVIDIA 构建；不支持 DX12/DirectML 或无法识别的运行环境")
+            python, main = _official_python(root), _official_main_py(root)
+            if python is None or main is None:
+                raise ValueError("引擎不完整：需要 _internal/python/python.exe 与 _internal/DeepFaceLive/main.py")
+            source = main.parent
+            for relative in ("modelhub/DFLive/DFMModel.py", "xlib/face/FLandmarks2D.py"):
+                if not (source / relative).is_file():
+                    raise ValueError(f"引擎缺少 {relative}；请完整解压 NVIDIA 安装包")
+            if cfg.camera_index < 0 or not 160 <= cfg.width <= 1920 or not 120 <= cfg.height <= 1080:
+                raise ValueError("摄像头编号或画面尺寸无效（支持 160×120 至 1920×1080）")
+            provider, _, index = cfg.gpu_device.partition(":")
+            if provider != "cuda" or int(index or 0) < 0:
+                raise ValueError("专用模型模式需要 NVIDIA GPU，设备格式为 cuda:0")
+            timeout = float(cfg.extra.get("facefusion_startup_timeout") or 120)
+            if not math.isfinite(timeout) or not 10 <= timeout <= 600:
+                raise ValueError("引擎启动等待时间必须为 10 至 600 秒")
+            worker_config = {
+                "root": str(root), "source_root": str(source), "dfm_path": str(dfm),
+                "version": self.engine_version, "device_id": int(index or 0),
+                "camera_index": cfg.camera_index, "width": cfg.width, "height": cfg.height,
+                "fps": 30, "watermark": cfg.watermark_text,
+            }
+        except Exception as exc:
+            with self._lock:
+                self._error = str(exc)
+            raise RuntimeError(str(exc)) from exc
+        with self._lock:
+            self._root, self._python, self._cfg = root, python, cfg
+            self._worker_config, self._startup_timeout = worker_config, timeout
             self._status = EngineStatus.READY
 
+    def _launch_env(self, python: Path) -> dict[str, str]:
+        env = _worker_env(python)
+        cuda = self._root / "_internal/CUDA"
+        paths = [cuda / "bin", cuda, python.parent / "DLLs"]
+        env["PATH"] = os.pathsep.join(str(p) for p in paths if p.is_dir()) + os.pathsep + env.get("PATH", "")
+        env["CUDA_PATH"] = str(cuda)
+        # Upstream caches devices in env vars; discover afresh in this interpreter.
+        for key in list(env):
+            if key.startswith("ORT_DEVICE"):
+                env.pop(key)
+        return env
+
     def set_source_faces(self, paths: list[str]) -> None:
-        if self._cfg is not None:
-            self._cfg.source_face_paths = list(paths)
-
-    def read_frame(self) -> Optional[EngineFrame]:
-        # External DFL UI owns preview; RUNNING ≠ 首帧出画.
+        # A trained DFM already contains the source identity.
         return None
-
-    def last_error(self) -> Optional[str]:
-        return self._error
-
-    def shutdown(self) -> None:
-        try:
-            self.stop()
-        except Exception:
-            pass
 
 
 def create_engine(kind: str = "placeholder") -> FaceSwapEngine:

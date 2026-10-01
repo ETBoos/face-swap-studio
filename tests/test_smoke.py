@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import numpy as np
 import pytest
 
 
 def test_version():
     from face_swap_studio import __version__
 
-    assert __version__ == "0.2.0a1"
+    assert __version__ == "0.2.0a2"
 
 
 def test_consent_banner():

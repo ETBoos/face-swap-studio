@@ -13,8 +13,8 @@ class WorkMode(str, Enum):
 
 
 MODE_LABELS_ZH = {
-    WorkMode.SIMPLE: "照片模式（FaceFusion）",
-    WorkMode.PRO: "专属模型（DeepFaceLive · .dfm）",
+    WorkMode.SIMPLE: "照片模式",
+    WorkMode.PRO: "专业人物模型（.dfm）",
 }
 
 MODE_ENGINE_IDS = {

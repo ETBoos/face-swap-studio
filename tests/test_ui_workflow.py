@@ -212,6 +212,7 @@ def test_first_real_frame_gates_output_and_loss_of_face_pauses(scene):
     assert w.session_state == "previewing"
     assert w.btn_output_start.isEnabled()
     assert w.output is None  # first frame must never auto-start broadcasting
+    assert "尚未输出" in w.output_info.text()
     w.btn_output_start.click()
     eng.push(frame_id=2)
     w._on_tick()
@@ -225,6 +226,7 @@ def test_first_real_frame_gates_output_and_loss_of_face_pauses(scene):
     w._on_tick()
     assert w.btn_output_start.isEnabled()
     assert w.output.state == "paused"  # recovery needs user's explicit restart
+    assert "预览已恢复" in w.output_info.text()
     w.btn_output_start.click()
     assert w.output.state == "running"
     assert len(w.output.sent) == 3
@@ -424,3 +426,48 @@ def test_long_session_face_loss_gets_a_fresh_recovery_window(scene):
     w._on_tick()
     assert w.session_state == "waiting"
     assert w._previewing
+
+
+def test_headless_pro_loading_preview_output_and_expiry(scene, monkeypatch):
+    w, _, _, _, _ = scene
+    allowed = [True]
+    monkeypatch.setattr(w.license.state, "allows_pro_dfm", lambda: allowed[0])
+    eng = FakeEngine()
+    eng.loading_message = lambda: "正在加载专用人物模型…"
+    w._factory = lambda _: eng
+    w.consent_box.setChecked(True)
+    w.mode_combo.setCurrentIndex(w.mode_combo.findData("pro"))
+    w.settings["dfm_path"] = "model.dfm"
+    w.btn_start.click()
+    until(lambda: not w._starting_job)
+    w._timer.stop()
+    w._on_tick()
+    assert w.session_state == "waiting"
+    assert "FaceSwap Studio" in w.preview_label.text()
+    assert "正在加载专用人物模型" in w.preview_label.text()
+    assert not w.loading_bar.isHidden()
+    assert not w.btn_output_start.isEnabled()
+    eng.push()
+    w._on_tick()
+    assert w.session_state == "previewing" and w.loading_bar.isHidden()
+    w.btn_output_start.click()
+    assert w.output.state == "running"
+    allowed[0] = False
+    eng.push(frame_id=2)
+    w._on_tick()
+    assert not w._previewing
+    assert w.output.state == "stopped"
+    assert len(w.output.sent) == 1
+    assert "授权已失效" in w.notice_label.text()
+
+
+def test_output_expiry_blocks_next_frame(scene):
+    w, eng = begin(scene)
+    eng.push()
+    w._on_tick()
+    w.btn_output_start.click()
+    w.license.state.expires_at = "2000-01-01T00:00:00+00:00"
+    eng.push(frame_id=2)
+    w._on_tick()
+    assert w.output.state == "paused"
+    assert len(w.output.sent) == 1

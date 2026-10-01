@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -13,7 +13,6 @@ from face_swap_studio.engines.deepfacelive import (
     build_launch_command,
     detect_build_kind,
     resolve_deepfacelive_root,
-    stage_dfm,
     validate_dfm_file,
 )
 
@@ -38,7 +37,10 @@ def _official_nvidia_layout(root: Path) -> Path:
     main = root / "_internal" / "DeepFaceLive"
     main.mkdir(parents=True)
     (main / "main.py").write_text("# stub\n", encoding="utf-8")
-    sp = py / "Lib" / "site-packages" / "onnxruntime"
+    for relative in ("modelhub/DFLive/DFMModel.py", "xlib/face/FLandmarks2D.py"):
+        file = main / relative
+        file.parent.mkdir(parents=True, exist_ok=True)
+        file.write_text("# fixture")
     # marker path scanned via walk
     (root / "_internal" / "python" / "Lib" / "site-packages").mkdir(parents=True, exist_ok=True)
     (root / "_internal" / "python" / "Lib" / "site-packages" / "onnxruntime_gpu_marker.txt").write_text(
@@ -90,61 +92,52 @@ def test_validate_dfm_rejects_tiny(tmp_path: Path) -> None:
     assert "过小" in r.message
 
 
-def test_initialize_stages_into_custom_userdata_and_keeps_flag(tmp_path: Path) -> None:
+def test_initialize_uses_original_model_without_launching_gui(tmp_path: Path) -> None:
     root = _official_nvidia_layout(tmp_path / "DeepFaceLive")
-    dfm = _fake_dfm(tmp_path / "id.dfm")
+    dfm = _fake_dfm(tmp_path / "人物 空格.dfm")
     custom = tmp_path / "ud_custom"
     eng = DeepFaceLiveEngine()
-    eng.initialize(
-        EngineConfig(
-            extra={
-                "dfm_path": str(dfm),
-                "deepfacelive_root": str(root),
-                "userdata_dir": str(custom),
-            }
-        )
-    )
+    eng.initialize(EngineConfig(extra={"dfm_path": str(dfm), "deepfacelive_root": str(root),
+                                      "userdata_dir": str(custom)}))
     assert eng.status() == EngineStatus.READY
-    assert (custom / "dfm_models" / "id.dfm").is_file()
-    assert eng._launch_cmd is not None
-    assert "--userdata-dir" in eng._launch_cmd
-    assert str(custom.resolve()) in eng._launch_cmd
+    assert eng.capabilities().preview_mode == "internal"
+    assert not custom.exists()
+    assert eng._worker_config["dfm_path"] == str(dfm.resolve())
+    assert "deepfacelive_worker.py" in " ".join(eng._launch_command())
+    assert "main.py" not in " ".join(eng._launch_command())
+    assert not any(x.endswith(".bat") for x in eng._launch_command())
+    env = eng._launch_env(eng._python)
+    assert str(root / "_internal/CUDA/bin") in env["PATH"]
 
 
-def test_initialize_and_start_stop(tmp_path: Path) -> None:
-    root = _official_nvidia_layout(tmp_path / "DeepFaceLive_NVIDIA")
-    dfm = _fake_dfm(tmp_path / "id.dfm")
+def test_start_waits_for_valid_frame_and_stop_is_nonblocking(tmp_path):
+    root = _official_nvidia_layout(tmp_path / "DeepFaceLive")
+    dfm = _fake_dfm(tmp_path / "model.dfm")
     eng = DeepFaceLiveEngine()
-    eng.initialize(
-        EngineConfig(extra={"dfm_path": str(dfm), "deepfacelive_root": str(root)})
-    )
-    fake = MagicMock()
-    fake.poll.return_value = None
-    with patch("face_swap_studio.engines.deepfacelive.subprocess.Popen", return_value=fake) as popen:
+    eng.initialize(EngineConfig(extra={"dfm_path": str(dfm), "deepfacelive_root": str(root)}))
+    with patch.object(eng, "_run_worker"):
         eng.start()
-        assert eng.status() == EngineStatus.RUNNING
-        popen.assert_called_once()
-        # env should include CUDA path when present
-        env = popen.call_args.kwargs.get("env") or {}
-        assert "CUDA_PATH" in env or True  # portable
+        assert eng.status() == EngineStatus.STARTING
+        eng._accept_message(eng._generation, {"type": "status", "message": "正在加载人物模型"}, b"")
+        assert eng.loading_message() == "正在加载人物模型"
+        eng._accept_message(eng._generation, {"type": "ready", "engine_version": eng.engine_version}, b"")
+        assert eng.status() == EngineStatus.STARTING
+        eng._accept_message(eng._generation, {"type": "error", "message": "CUDA DLL 缺失"}, b"")
+        assert eng.status() == EngineStatus.ERROR
+        assert eng.last_error() == "CUDA DLL 缺失"
         eng.stop()
-        fake.terminate.assert_called()
+        assert eng.status() == EngineStatus.READY
 
 
-def test_process_exit_sets_error(tmp_path: Path) -> None:
-    root = _official_nvidia_layout(tmp_path / "DeepFaceLive_NVIDIA")
-    dfm = _fake_dfm(tmp_path / "id.dfm")
-    eng = DeepFaceLiveEngine()
-    eng.initialize(
-        EngineConfig(extra={"dfm_path": str(dfm), "deepfacelive_root": str(root)})
-    )
-    fake = MagicMock()
-    fake.poll.return_value = None
-    fake.returncode = 1
-    with patch("face_swap_studio.engines.deepfacelive.subprocess.Popen", return_value=fake):
-        eng.start()
-        assert eng.status() == EngineStatus.RUNNING
-        fake.poll.return_value = 1
-        st = eng.status()
-        assert st == EngineStatus.ERROR
-        assert eng.last_error() and "退出" in eng.last_error()
+def test_explicit_bad_root_never_falls_back(tmp_path, monkeypatch):
+    root = _official_nvidia_layout(tmp_path / "DeepFaceLive")
+    monkeypatch.setenv("DEEPFACELIVE_ROOT", str(root))
+    assert resolve_deepfacelive_root(str(tmp_path / "missing")) is None
+
+
+def test_missing_runtime_sources_rejected(tmp_path):
+    root = _official_nvidia_layout(tmp_path / "DeepFaceLive")
+    dfm = _fake_dfm(tmp_path / "model.dfm")
+    (root / "_internal/DeepFaceLive/modelhub/DFLive/DFMModel.py").unlink()
+    with pytest.raises(RuntimeError, match="完整解压"):
+        DeepFaceLiveEngine().initialize(EngineConfig(extra={"dfm_path": str(dfm), "deepfacelive_root": str(root)}))

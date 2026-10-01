@@ -1,0 +1,25 @@
+DeepFaceLive headless integration
+
+Upstream: https://github.com/iperov/DeepFaceLive
+API reference commit: fc7b787bda2b8c186e142c52857458eea3a935ed
+Upstream license: GNU General Public License version 3 (see LICENSE).
+
+The separately installed DeepFaceLive NVIDIA runtime provides DFMModel,
+YoloV5Face, InsightFace2D106, face alignment and ONNX Runtime integration.
+FaceSwap Studio does not launch its graphical application. It uses a new
+headless worker, supplied as editable Python source in:
+_internal/face_swap_studio/engines/deepfacelive_worker.py
+
+The new integration worker is provided under GPL-3.0-only. Its supporting
+transport and capture source files are included alongside it. Application
+source and build scripts for each build are available at:
+https://github.com/ETBoos/face-swap-studio
+Use the commit recorded in build-info.json to retrieve the matching source.
+
+This package does not redistribute the upstream runtime or model weights.
+If distributing that runtime, preserve its license and supply the complete
+corresponding source required by its license. Model weight licenses are
+separate. A separate process is not a legal determination that the combined
+product may be distributed as proprietary software. Review obligations for
+the actual distribution before commercial release; this notice alone is not
+proof of compliance for a combined distribution.

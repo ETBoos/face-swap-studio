@@ -1,6 +1,6 @@
 """Placeholder engine — camera or synthetic frame with banner overlay.
 
-Used until DeepFaceLive / InsightFace is integrated on a GPU workstation.
+Used to check the camera without loading a face-swap model.
 Does NOT perform face swap.
 """
 
@@ -116,9 +116,9 @@ class PlaceholderEngine(FaceSwapEngine):
     def _draw_overlays(self, frame: np.ndarray) -> None:
         assert self._config is not None
         lines = [
-            "FaceSwap Studio — STUB / 占位引擎",
-            "尚未接入 DeepFaceLive，当前无真实换脸",
-            "仅限授权影视用途",
+            "FaceSwap Studio - Camera Demo",
+            "No face swap - select Photo or Professional mode",
+            "Preview only - output disabled",
         ]
         y = 36
         for line in lines:

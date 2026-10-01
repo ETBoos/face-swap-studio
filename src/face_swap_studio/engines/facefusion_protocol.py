@@ -35,10 +35,14 @@ def _read_exact(stream: BinaryIO, amount: int, *, allow_eof: bool = False) -> by
 def _validate_header(header: dict[str, Any], payload_size: int) -> None:
     if header.get("protocol") != PROTOCOL_VERSION:
         raise ProtocolError("Unsupported FaceFusion worker protocol version")
-    if header.get("type") not in {"ready", "frame", "error"}:
+    if header.get("type") not in {"ready", "frame", "error", "status"}:
         raise ProtocolError("Unknown FaceFusion worker message type")
     if type(payload_size) is not int or not 0 <= payload_size <= MAX_FRAME_BYTES:
         raise ProtocolError("Invalid FaceFusion worker payload size")
+    if header["type"] == "status" and (
+        not isinstance(header.get("message"), str) or not 1 <= len(header["message"]) <= 512
+    ):
+        raise ProtocolError("Invalid loading status")
     if header["type"] == "frame":
         width, height = header.get("width"), header.get("height")
         if (
