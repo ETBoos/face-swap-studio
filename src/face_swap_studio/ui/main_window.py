@@ -780,6 +780,17 @@ class MainWindow(QMainWindow):
                         if first:
                             self.log.record("real_preview_ready")
                         if (
+                            (frame.meta or {}).get("stage_ms")
+                            and now - getattr(self, "_last_engine_metrics_at", 0) >= 10
+                        ):
+                            self._last_engine_metrics_at = now
+                            self.log.record(
+                                "engine_performance", fps=frame.fps,
+                                stage_ms=frame.meta["stage_ms"],
+                                processing_ms=frame.meta.get("processing_ms"),
+                                capture_to_processed_ms=frame.meta.get("capture_to_processed_ms"),
+                            )
+                        if (
                             self.output
                             and _value(self.output.status()) == "running"
                             and not self.output.send(frame)
@@ -875,6 +886,10 @@ class MainWindow(QMainWindow):
 
     def _sync_output_status(self):
         if self.output is None:
+            if self.session_state == "previewing":
+                self.output_info.setText(
+                    "本机预览已就绪，尚未输出。点击「开始输出」，并在通话软件中选择 FaceSwap Studio Camera。"
+                )
             return
         status = _value(self.output.status())
         if status == "running" and getattr(self.output, "receiver_connected", True) is False:
@@ -890,9 +905,12 @@ class MainWindow(QMainWindow):
                 f"输出失败：{self.output.last_error()}。检查虚拟摄像头安装与设备占用后，可重新开始输出。"
             )
         elif status == "paused":
-            self.output_info.setText(
-                self.output.last_error() or "输出已暂停。确认预览后手动重新开始。"
-            )
+            if self._real_frame_ready() and self.license.state.allows_output():
+                self.output_info.setText("本机预览已恢复，输出仍暂停。确认画面后点击「开始输出」。")
+            else:
+                self.output_info.setText(
+                    self.output.last_error() or "输出已暂停。确认预览后手动重新开始。"
+                )
 
     def _install_output_component(self):
         if sys.platform != "win32":

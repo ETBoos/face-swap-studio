@@ -80,6 +80,7 @@ class DFMModel:
         size=frame.shape[0]
         mask=np.ones((1,size,size,1),np.float32)
         if (ROOT/'empty_mask').exists(): mask *= 0
+        if (ROOT/'weak_mask').exists(): mask *= 0.54
         if (ROOT/'black_output').exists(): return np.zeros((1,size,size,3),np.float32), mask, mask
         if (ROOT/'unchanged').exists(): return frame[None], mask, mask
         return np.full((1,size,size,3),0.75,np.float32), mask, mask
@@ -109,6 +110,7 @@ class FLandmarks2D(FRect):
     @staticmethod
     def create(kind,points): return FLandmarks2D()
     def transform(self,*args,**kw): return self
+    def as_numpy(self,w_h=None): return np.full((106,2),0.5,np.float32) * (w_h or (1,1))
     def get_convexhull_mask(self,h_w,**kw):
         mask=np.zeros((h_w[0],h_w[1],1),np.float32)
         cv2.circle(mask,(h_w[1]//2,h_w[0]//2),h_w[0]//4,1,-1)
@@ -173,7 +175,7 @@ def test_worker_returns_swapped_frames_then_hides_no_face_and_disconnects(worker
     until(lambda: (source/'released').exists())
 
 
-@pytest.mark.parametrize('marker', ['multiple', 'empty_mask', 'black_output',
+@pytest.mark.parametrize('marker', ['multiple', 'empty_mask', 'weak_mask', 'black_output',
                                      'misalign', 'unchanged'])
 def test_unsafe_frames_never_enable_output(worker, marker):
     eng, source, _ = worker

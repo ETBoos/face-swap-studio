@@ -212,6 +212,7 @@ def test_first_real_frame_gates_output_and_loss_of_face_pauses(scene):
     assert w.session_state == "previewing"
     assert w.btn_output_start.isEnabled()
     assert w.output is None  # first frame must never auto-start broadcasting
+    assert "尚未输出" in w.output_info.text()
     w.btn_output_start.click()
     eng.push(frame_id=2)
     w._on_tick()
@@ -225,6 +226,7 @@ def test_first_real_frame_gates_output_and_loss_of_face_pauses(scene):
     w._on_tick()
     assert w.btn_output_start.isEnabled()
     assert w.output.state == "paused"  # recovery needs user's explicit restart
+    assert "预览已恢复" in w.output_info.text()
     w.btn_output_start.click()
     assert w.output.state == "running"
     assert len(w.output.sent) == 3
