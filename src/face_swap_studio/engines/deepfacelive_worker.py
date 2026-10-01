@@ -105,12 +105,33 @@ class DeepFaceLivePipeline:
         swapped, celeb_mask, source_mask = validate_prediction(
             self.model.convert(aligned.astype(np.float32) / 255.0), self.resolution, np,
         )
-        mask = np.minimum(celeb_mask, source_mask)[:, :, 0]
-        erode = max(1, round(self.resolution / 64))
-        mask = cv2.erode(mask, np.ones((erode * 2 + 1, erode * 2 + 1), np.uint8))
-        mask[:erode, :] = mask[-erode:, :] = 0
-        mask[:, :erode] = mask[:, -erode:] = 0
-        mask = cv2.GaussianBlur(mask, (erode * 4 + 1, erode * 4 + 1), 0)
+        # Both masks must agree. The model can emit a rectangular background
+        # around the aligned face; keep that area outside the face landmarks.
+        mask = (celeb_mask * source_mask)[:, :, 0]
+        aligned_landmarks = landmarks.transform(matrix)
+        hull = aligned_landmarks.get_convexhull_mask(
+            (self.resolution, self.resolution), dtype=np.float32,
+        )[:, :, 0]
+        hull_size = max(3, (self.resolution // 16) | 1)
+        hull = cv2.dilate(hull, cv2.getStructuringElement(
+            cv2.MORPH_ELLIPSE, (hull_size, hull_size),
+        ))
+        mask *= hull
+        if np.count_nonzero(mask > 0.25) < max(32, self.resolution**2 // 100):
+            return self.placeholder(frame, "模型没有生成足够的面部蒙版")
+
+        # Match DeepFaceLive's default 5-pixel erosion, 25-pixel blur and
+        # fade-to-border behavior. Without the border fade, OpenCV's black
+        # padding is blended into the camera as a dark square.
+        side = self.resolution
+        mask = np.pad(mask, ((side, side), (side, side)))
+        mask = cv2.erode(mask, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3)),
+                         iterations=2)
+        fade = 25 // 2
+        mask[:side + fade, :] = mask[-side - fade:, :] = 0
+        mask[:, :side + fade] = mask[:, -side - fade:] = 0
+        mask = cv2.GaussianBlur(mask, (0, 0), sigmaX=25 * 0.25)
+        mask = mask[side:-side, side:-side]
         affine = matrix.invert().to_exact_mat(self.resolution, self.resolution, width, height)
         if not np.isfinite(affine).all():
             return self.placeholder(frame, "人脸角度暂时无法对齐")
@@ -118,10 +139,27 @@ class DeepFaceLivePipeline:
         if np.count_nonzero(full_mask > 0.1) < 64:
             return self.placeholder(frame, "模型没有生成有效面部蒙版")
         full_face = cv2.warpAffine(swapped, affine, (width, height))
+        l, t, r, b = rectangle
+        margin = max(r - l, b - t) * 0.35
+        x0, y0 = max(0, int(l - margin)), max(0, int(t - margin))
+        x1, y1 = min(width, int(r + margin)), min(height, int(b + margin))
+        visible_mask = full_mask[:, :, 0] > 0.1
+        near_face = np.zeros((height, width), dtype=bool)
+        near_face[y0:y1, x0:x1] = True
+        if np.count_nonzero(visible_mask & near_face) < 0.65 * np.count_nonzero(visible_mask):
+            return self.placeholder(frame, "换脸区域偏离人脸，输出已暂停")
+        face_core = full_mask[:, :, 0] > 0.3
+        if not np.count_nonzero(face_core):
+            return self.placeholder(frame, "面部蒙版太弱，输出已暂停")
+        black_pixels = (full_face.max(axis=2) < 0.03) & (frame.mean(axis=2) > 25)
+        if np.count_nonzero(black_pixels & face_core) > 0.25 * np.count_nonzero(face_core):
+            return self.placeholder(frame, "模型输出大面积黑色，输出已暂停")
+        face_area = face_core & near_face
+        change = np.abs(full_face * 255 - frame.astype(np.float32)).mean(axis=2)
+        if np.count_nonzero(face_area) < 64 or change[face_area].mean() < 3:
+            return self.placeholder(frame, "模型没有明显改变脸部，输出已暂停")
         result = np.clip(frame.astype(np.float32) * (1 - full_mask) + full_face * 255 * full_mask,
                          0, 255).astype(np.uint8)
-        if np.array_equal(frame, result):
-            return self.placeholder(frame, "模型没有改变画面，输出已暂停")
         if self.config.get("watermark"):
             text = str(self.config["watermark"])
             if not text.isascii():

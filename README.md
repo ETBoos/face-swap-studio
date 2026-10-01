@@ -2,14 +2,14 @@
 
 面向有实时换脸视频通话、直播需求的桌面用户。重点是动态真实感、稳定输出、第一次使用也能理解的操作流程。
 
-当前版本：**0.2.0a2，Windows 可安装预览版**。本版正在建立真实输入、换脸、预览、输出和故障恢复的完整链路。模型效果、GPU 性能和具体通话平台的兼容性仍需真机验收；此版本不代表已达到正式商用交付标准。
+当前版本：**0.2.0a3，Windows 可安装预览版**。本版正在建立真实输入、换脸、预览、输出和故障恢复的完整链路。模型效果、GPU 性能和具体通话平台的兼容性仍需真机验收；此版本不代表已达到正式商用交付标准。
 
 ## 安装与首次使用
 
 从本仓库 **Actions → Windows package → 成功运行的 Artifacts** 取得构建产物：
 
-- `FaceSwapStudio-0.2.0a2-windows-x64-setup.exe`：主程序，按当前用户安装，无需自行安装 Python。
-- `FaceSwapStudio-0.2.0a2-windows-x64-portable.zip`：便携版，完整解压后运行。
+- `FaceSwapStudio-0.2.0a3-windows-x64-setup.exe`：主程序，按当前用户安装，无需自行安装 Python。
+- `FaceSwapStudio-0.2.0a3-windows-x64-portable.zip`：便携版，完整解压后运行。
 - `FaceSwapStudio-Camera-Setup.exe`：独立虚拟摄像头组件，安装时需要 Windows 管理员权限。主程序开始菜单也提供该组件的安装入口。
 - `安装配置教学.md`：随主程序安装，并在开始菜单提供入口，包含 FaceFusion、授权、虚拟摄像头和 OBS 配置步骤。
 - `SHA256SUMS.txt` / `build-info.json`：文件校验与构建信息。

@@ -80,6 +80,8 @@ class DFMModel:
         size=frame.shape[0]
         mask=np.ones((1,size,size,1),np.float32)
         if (ROOT/'empty_mask').exists(): mask *= 0
+        if (ROOT/'black_output').exists(): return np.zeros((1,size,size,3),np.float32), mask, mask
+        if (ROOT/'unchanged').exists(): return frame[None], mask, mask
         return np.full((1,size,size,3),0.75,np.float32), mask, mask
 ''')
     put("xlib/__init__.py", "")
@@ -92,9 +94,13 @@ def get_available_devices_info(**kwargs): return [Device()]
     put("xlib/face/FLandmarks2D.py", "# layout marker")
     put("xlib/face/__init__.py", '''
 import cv2, numpy as np
+from pathlib import Path
+ROOT=Path(__file__).parents[2]
 class Matrix:
     def invert(self): return self
-    def to_exact_mat(self,*args): return np.array([[1,0,40],[0,1,20]],np.float32)
+    def to_exact_mat(self,*args):
+        x=140 if (ROOT/'misalign').exists() else 40
+        return np.array([[1,0,x],[0,1,20]],np.float32)
 class FRect:
     @staticmethod
     def from_ltrb(rect): return FRect()
@@ -103,6 +109,10 @@ class FLandmarks2D(FRect):
     @staticmethod
     def create(kind,points): return FLandmarks2D()
     def transform(self,*args,**kw): return self
+    def get_convexhull_mask(self,h_w,**kw):
+        mask=np.zeros((h_w[0],h_w[1],1),np.float32)
+        cv2.circle(mask,(h_w[1]//2,h_w[0]//2),h_w[0]//4,1,-1)
+        return mask
 class ELandmarks2D: L106=106
 ''')
     python = root / "_internal/python/python.exe"
@@ -163,7 +173,8 @@ def test_worker_returns_swapped_frames_then_hides_no_face_and_disconnects(worker
     until(lambda: (source/'released').exists())
 
 
-@pytest.mark.parametrize('marker', ['multiple', 'empty_mask'])
+@pytest.mark.parametrize('marker', ['multiple', 'empty_mask', 'black_output',
+                                     'misalign', 'unchanged'])
 def test_unsafe_frames_never_enable_output(worker, marker):
     eng, source, _ = worker
     (source/marker).touch()
