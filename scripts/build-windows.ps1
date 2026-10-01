@@ -68,9 +68,9 @@ try {
     }
     Invoke-Checked $InnoSetupCompiler @("/DAppVersion=$Version", "/DNativeDir=$NativeDir", "/DArtifactsDir=$ArtifactsDir", "packaging\camera-installer.iss")
     Invoke-Checked $PythonExe @("-m", "PyInstaller", "--clean", "--noconfirm", "--distpath", "dist", "--workpath", "build\pyinstaller", "packaging\face-swap-studio.spec")
-    foreach ($WorkerFile in @("facefusion_worker.py", "facefusion_protocol.py")) {
+    foreach ($WorkerFile in @("facefusion_worker.py", "facefusion_protocol.py", "deepfacelive_worker.py")) {
         if (-not (Test-Path (Join-Path $BundleDir "_internal\face_swap_studio\engines\$WorkerFile"))) {
-            throw "The external FaceFusion worker source was not bundled: $WorkerFile"
+            throw "The external inference worker source was not bundled: $WorkerFile"
         }
     }
     $ComponentsDir = Join-Path $BundleDir "components"
@@ -78,6 +78,7 @@ try {
     Copy-Item (Join-Path $ArtifactsDir "FaceSwapStudio-Camera-Setup.exe") $ComponentsDir
     Copy-Item "packaging\README-WINDOWS.txt" $BundleDir
     Copy-Item "docs\INSTALLATION_GUIDE.md" (Join-Path $BundleDir "安装配置教学.md")
+    Copy-Item "docs\DFM_HEADLESS.md" (Join-Path $BundleDir "专业模型使用说明.md")
     Copy-Item (Join-Path $MetadataDir "THIRD-PARTY-NOTICES") $BundleDir -Recurse -Force
     Copy-Item (Join-Path $MetadataDir "build-info.json") $BundleDir
     Copy-Item (Join-Path $MetadataDir "activation.json") $BundleDir

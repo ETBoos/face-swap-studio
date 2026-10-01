@@ -105,7 +105,13 @@ def _worker_env(python: Path) -> dict[str, str]:
     return env
 
 
-class FaceFusionEngine(FaceSwapEngine):
+class IsolatedWorkerEngine(FaceSwapEngine):
+    """Shared bounded IPC and lifecycle for external inference interpreters."""
+
+    worker_filename = "facefusion_worker.py"
+    engine_version = SUPPORTED_VERSION
+    display_name = "FaceFusion"
+
     def __init__(self, facefusion_root: Path | None = None) -> None:
         self._root_hint = facefusion_root
         self._root: Path | None = None
@@ -124,7 +130,256 @@ class FaceFusionEngine(FaceSwapEngine):
         self._startup_timeout = 120.0
         self._stderr_tail = ""
         self._last_frame_id = 0
+        self._loading_message = "正在准备引擎…"
 
+    def start(self) -> None:
+        with self._lock:
+            if self._status in {EngineStatus.STARTING, EngineStatus.RUNNING}:
+                return
+            if self._status != EngineStatus.READY or self._worker_config is None:
+                raise RuntimeError(self._error or "引擎尚未配置完成")
+            self._generation += 1
+            generation = self._generation
+            self._stop_event = threading.Event()
+            self._latest, self._last_frame_id, self._error = None, 0, None
+            self._stderr_tail, self._ready = "", False
+            self._started_at, self._received_at = time.monotonic(), 0.0
+            self._status = EngineStatus.STARTING
+            self._loading_message = "正在启动引擎…"
+            for target, name in ((self._run_worker, "reader"), (self._watchdog, "watchdog")):
+                threading.Thread(target=target, args=(generation, self._stop_event),
+                                 daemon=True, name=f"inference-{name}").start()
+
+    def loading_message(self) -> str:
+        with self._lock:
+            return self._loading_message
+
+    def _launch_env(self, python: Path) -> dict[str, str]:
+        return _worker_env(python)
+
+    def _launch_command(self) -> list[str]:
+        worker = str(Path(__file__).with_name(self.worker_filename))
+        if sys.platform == "win32":
+            # PyInstaller's SetDllDirectory setting is inherited by child processes.
+            # Reset it in the *child* before importing native numerical libraries;
+            # changing it in the GUI process would race Qt/native plugin loading.
+            bootstrap = (
+                "import ctypes, sys; "
+                "ctypes.windll.kernel32.SetDllDirectoryW(None); "
+                "import os, runpy; "
+                "sys.path.insert(0, os.path.dirname(sys.argv[1])); "
+                "runpy.run_path(sys.argv[1], run_name='__main__')"
+            )
+            return [str(self._python), "-u", "-c", bootstrap, worker]
+        return [str(self._python), "-u", worker]
+
+    def _run_worker(self, generation: int, stop_event: threading.Event) -> None:
+        proc = None
+        try:
+            with self._lock:
+                if generation != self._generation or stop_event.is_set():
+                    return
+                command, root, python = self._launch_command(), self._root, self._python
+                config = json.dumps(self._worker_config).encode("utf-8") + b"\n"
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
+            proc = subprocess.Popen(command, cwd=str(root), env=self._launch_env(python),
+                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, creationflags=flags)
+            with self._lock:
+                if generation != self._generation or stop_event.is_set():
+                    return
+                self._proc = proc
+            threading.Thread(target=self._drain_stderr, args=(proc, generation),
+                             daemon=True, name="inference-stderr").start()
+            proc.stdin.write(config)
+            proc.stdin.flush()
+            proc.stdin.close()
+            while not stop_event.is_set():
+                message = read_message(proc.stdout)
+                if message is None:
+                    break
+                self._accept_message(generation, *message)
+            if not stop_event.is_set():
+                self._fail(generation, f"{self.display_name} 工作进程退出（代码 {proc.poll()}）；请检查专用 Python、模型及显卡环境")
+        except Exception as exc:  # noqa: BLE001 - translate thread failures to GUI state
+            if not stop_event.is_set():
+                self._fail(generation, f"{self.display_name} 无法运行：{exc}")
+        finally:
+            if proc is not None:
+                self._reap(proc)
+
+    def _drain_stderr(self, proc: subprocess.Popen, generation: int) -> None:
+        try:
+            while True:
+                chunk = proc.stderr.read(1024)
+                if not chunk:
+                    break
+                with self._lock:
+                    if generation == self._generation:
+                        self._stderr_tail = (self._stderr_tail + chunk.decode("utf-8", "replace"))[-8192:]
+        except (OSError, ValueError):
+            pass
+
+    def _accept_message(self, generation: int, header: dict[str, Any], payload: bytes) -> None:
+        with self._lock:
+            if generation != self._generation or self._stop_event.is_set():
+                return
+            if header["type"] == "error":
+                self._fail(generation, str(header.get("message") or "引擎处理失败"))
+                return
+            if header["type"] == "status":
+                self._loading_message = header["message"]
+                return
+            if header["type"] == "ready":
+                if header.get("engine_version") != self.engine_version:
+                    raise ProtocolError("Worker reported an unexpected engine version")
+                self._ready, self._received_at = True, time.monotonic()
+                return
+            if not self._ready:
+                raise ProtocolError("Worker emitted a frame before model validation")
+            meta = dict(header["meta"])
+            frame_id = meta.get("frame_id")
+            if type(frame_id) is not int or frame_id <= self._last_frame_id:
+                raise ProtocolError("Worker emitted an invalid or out-of-order frame ID")
+            if meta.get("engine_version") != self.engine_version:
+                raise ProtocolError("Frame engine version mismatch")
+            for key in ("captured_at_ns", "captured_monotonic_ns", "processed_at_ns",
+                        "processed_monotonic_ns"):
+                if type(meta.get(key)) is not int or meta[key] <= 0:
+                    raise ProtocolError("Worker omitted frame timing")
+            if not (
+                meta["captured_monotonic_ns"] <= meta["processed_monotonic_ns"]
+                <= time.monotonic_ns()
+            ):
+                raise ProtocolError("Worker returned future or reversed monotonic frame timing")
+            swapped = meta.get("face_swapped") is True and meta.get("safe_to_output") is True
+            if not swapped and meta.get("placeholder") is not True:
+                raise ProtocolError("Worker returned an unsafe camera passthrough frame")
+            image = np.frombuffer(payload, dtype=np.uint8).reshape(header["height"], header["width"], 3).copy()
+            meta.update(stub=False, face_swapped=swapped, safe_to_output=swapped,
+                        received_at_ns=time.time_ns())
+            fps = float(header.get("fps", 0.0))
+            if not math.isfinite(fps) or fps < 0:
+                raise ProtocolError("Invalid worker FPS")
+            self._latest = EngineFrame(image=image, fps=fps, meta=meta)
+            self._last_frame_id, self._received_at = frame_id, time.monotonic()
+            if swapped:
+                self._status = EngineStatus.RUNNING
+
+    def _watchdog(self, generation: int, stop_event: threading.Event) -> None:
+        while not stop_event.wait(0.2):
+            with self._lock:
+                if generation != self._generation:
+                    return
+                now = time.monotonic()
+                if not self._ready and now - self._started_at > self._startup_timeout:
+                    self._fail(generation, f"{self.display_name} 加载超时；请检查模型、专用 Python 或增加启动等待时间")
+                elif self._ready and now - self._received_at > 15:
+                    self._fail(generation, f"{self.display_name} 连续 15 秒没有新画面；摄像头或推理已停止，请重新启动")
+
+    def _fail(self, generation: int, message: str) -> None:
+        with self._lock:
+            if generation != self._generation or self._stop_event.is_set():
+                return
+            self._status, self._error = EngineStatus.ERROR, message[:4096]
+            self._latest = None
+            self._stop_event.set()
+            if self._proc is not None:
+                self._request_termination(self._proc)
+
+    def status(self) -> EngineStatus:
+        with self._lock:
+            return self._status
+
+    def read_frame(self) -> EngineFrame | None:
+        with self._lock:
+            frame, self._latest = self._latest, None
+        if frame is not None and frame.meta.get("safe_to_output") is True:
+            age = time.monotonic_ns() - frame.meta["captured_monotonic_ns"]
+            if age > MAX_OUTPUT_AGE_NS or age < 0:
+                # A stalled worker/UI must never revive an old eligible frame.
+                # This is a generous stale-frame cutoff, not a latency promise.
+                frame = EngineFrame(
+                    image=np.full_like(frame.image, 24), fps=frame.fps,
+                    meta={**frame.meta, "face_swapped": False, "safe_to_output": False,
+                          "placeholder": True, "reason": "stale_frame"},
+                )
+        return frame
+
+    def last_error(self) -> str | None:
+        with self._lock:
+            return self._error
+
+    def diagnostic_tail(self) -> str:
+        """Bounded local diagnostic text; redact before sharing outside the device."""
+        with self._lock:
+            return self._stderr_tail
+
+    @staticmethod
+    def _request_termination(proc: subprocess.Popen) -> None:
+        """Kill a stuck worker even when its stdout reader is blocked."""
+        try:
+            proc.terminate()
+        except OSError:
+            pass
+
+        def escalate() -> None:
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                try:
+                    proc.kill()
+                except OSError:
+                    pass
+            except OSError:
+                pass
+
+        threading.Thread(target=escalate, daemon=True, name="inference-reaper").start()
+
+    @staticmethod
+    def _reap(proc: subprocess.Popen) -> None:
+        try:
+            if proc.poll() is None:
+                proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                proc.wait(timeout=2)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        finally:
+            for stream in (proc.stdin, proc.stdout, proc.stderr):
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except (OSError, ValueError):
+                        pass
+
+    def stop(self) -> None:
+        with self._lock:
+            self._generation += 1
+            self._stop_event.set()
+            proc, self._proc = self._proc, None
+            self._latest, self._ready = None, False
+            self._status = EngineStatus.READY if self._worker_config is not None else EngineStatus.UNAVAILABLE
+        if proc is not None:
+            self._request_termination(proc)
+            # Reader owns wait/kill/close, outside the GUI thread.
+
+    def set_source_faces(self, paths: list[str]) -> None:
+        with self._lock:
+            if self._cfg is None:
+                return
+            cfg = copy.deepcopy(self._cfg)
+        cfg.source_face_paths = list(paths)
+        self.initialize(cfg)
+
+    def shutdown(self) -> None:
+        self.stop()
+
+
+class FaceFusionEngine(IsolatedWorkerEngine):
     def capabilities(self) -> EngineCapabilities:
         return EngineCapabilities(
             name="facefusion", version=f"adapter-1 / FaceFusion {SUPPORTED_VERSION}",
@@ -188,241 +443,6 @@ class FaceFusionEngine(FaceSwapEngine):
             self._root, self._python, self._cfg = root, python, cfg
             self._worker_config, self._startup_timeout = worker_config, timeout
             self._status = EngineStatus.READY
-
-    def start(self) -> None:
-        with self._lock:
-            if self._status in {EngineStatus.STARTING, EngineStatus.RUNNING}:
-                return
-            if self._status != EngineStatus.READY or self._worker_config is None:
-                raise RuntimeError(self._error or "照片引擎尚未配置完成")
-            self._generation += 1
-            generation = self._generation
-            self._stop_event = threading.Event()
-            self._latest, self._last_frame_id, self._error = None, 0, None
-            self._stderr_tail, self._ready = "", False
-            self._started_at, self._received_at = time.monotonic(), 0.0
-            self._status = EngineStatus.STARTING
-            for target, name in ((self._run_worker, "reader"), (self._watchdog, "watchdog")):
-                threading.Thread(target=target, args=(generation, self._stop_event),
-                                 daemon=True, name=f"facefusion-{name}").start()
-
-    def _launch_command(self) -> list[str]:
-        worker = str(Path(__file__).with_name("facefusion_worker.py"))
-        if sys.platform == "win32":
-            # PyInstaller's SetDllDirectory setting is inherited by child processes.
-            # Reset it in the *child* before importing native numerical libraries;
-            # changing it in the GUI process would race Qt/native plugin loading.
-            bootstrap = (
-                "import ctypes, sys; "
-                "ctypes.windll.kernel32.SetDllDirectoryW(None); "
-                "import os, runpy; "
-                "sys.path.insert(0, os.path.dirname(sys.argv[1])); "
-                "runpy.run_path(sys.argv[1], run_name='__main__')"
-            )
-            return [str(self._python), "-u", "-c", bootstrap, worker]
-        return [str(self._python), "-u", worker]
-
-    def _run_worker(self, generation: int, stop_event: threading.Event) -> None:
-        proc = None
-        try:
-            with self._lock:
-                if generation != self._generation or stop_event.is_set():
-                    return
-                command, root, python = self._launch_command(), self._root, self._python
-                config = json.dumps(self._worker_config).encode("utf-8") + b"\n"
-            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
-            proc = subprocess.Popen(command, cwd=str(root), env=_worker_env(python),
-                                    stdin=subprocess.PIPE, stdout=subprocess.PIPE,
-                                    stderr=subprocess.PIPE, creationflags=flags)
-            with self._lock:
-                if generation != self._generation or stop_event.is_set():
-                    return
-                self._proc = proc
-            threading.Thread(target=self._drain_stderr, args=(proc, generation),
-                             daemon=True, name="facefusion-stderr").start()
-            proc.stdin.write(config)
-            proc.stdin.flush()
-            proc.stdin.close()
-            while not stop_event.is_set():
-                message = read_message(proc.stdout)
-                if message is None:
-                    break
-                self._accept_message(generation, *message)
-            if not stop_event.is_set():
-                self._fail(generation, f"FaceFusion 工作进程退出（代码 {proc.poll()}）；请检查专用 Python、模型及显卡环境")
-        except Exception as exc:  # noqa: BLE001 - translate thread failures to GUI state
-            if not stop_event.is_set():
-                self._fail(generation, f"FaceFusion 无法运行：{exc}")
-        finally:
-            if proc is not None:
-                self._reap(proc)
-
-    def _drain_stderr(self, proc: subprocess.Popen, generation: int) -> None:
-        try:
-            while True:
-                chunk = proc.stderr.read(1024)
-                if not chunk:
-                    break
-                with self._lock:
-                    if generation == self._generation:
-                        self._stderr_tail = (self._stderr_tail + chunk.decode("utf-8", "replace"))[-8192:]
-        except (OSError, ValueError):
-            pass
-
-    def _accept_message(self, generation: int, header: dict[str, Any], payload: bytes) -> None:
-        with self._lock:
-            if generation != self._generation or self._stop_event.is_set():
-                return
-            if header["type"] == "error":
-                self._fail(generation, str(header.get("message") or "FaceFusion 处理失败"))
-                return
-            if header["type"] == "ready":
-                if header.get("engine_version") != SUPPORTED_VERSION:
-                    raise ProtocolError("Worker reported an unexpected FaceFusion version")
-                self._ready, self._received_at = True, time.monotonic()
-                return
-            if not self._ready:
-                raise ProtocolError("Worker emitted a frame before model validation")
-            meta = dict(header["meta"])
-            frame_id = meta.get("frame_id")
-            if type(frame_id) is not int or frame_id <= self._last_frame_id:
-                raise ProtocolError("Worker emitted an invalid or out-of-order frame ID")
-            if meta.get("engine_version") != SUPPORTED_VERSION:
-                raise ProtocolError("Frame engine version mismatch")
-            for key in ("captured_at_ns", "captured_monotonic_ns", "processed_at_ns",
-                        "processed_monotonic_ns"):
-                if type(meta.get(key)) is not int or meta[key] <= 0:
-                    raise ProtocolError("Worker omitted frame timing")
-            if not (
-                meta["captured_monotonic_ns"] <= meta["processed_monotonic_ns"]
-                <= time.monotonic_ns()
-            ):
-                raise ProtocolError("Worker returned future or reversed monotonic frame timing")
-            swapped = meta.get("face_swapped") is True and meta.get("safe_to_output") is True
-            if not swapped and meta.get("placeholder") is not True:
-                raise ProtocolError("Worker returned an unsafe camera passthrough frame")
-            image = np.frombuffer(payload, dtype=np.uint8).reshape(header["height"], header["width"], 3).copy()
-            meta.update(stub=False, face_swapped=swapped, safe_to_output=swapped,
-                        received_at_ns=time.time_ns())
-            fps = float(header.get("fps", 0.0))
-            if not math.isfinite(fps) or fps < 0:
-                raise ProtocolError("Invalid worker FPS")
-            self._latest = EngineFrame(image=image, fps=fps, meta=meta)
-            self._last_frame_id, self._received_at = frame_id, time.monotonic()
-            if swapped:
-                self._status = EngineStatus.RUNNING
-
-    def _watchdog(self, generation: int, stop_event: threading.Event) -> None:
-        while not stop_event.wait(0.2):
-            with self._lock:
-                if generation != self._generation:
-                    return
-                now = time.monotonic()
-                if not self._ready and now - self._started_at > self._startup_timeout:
-                    self._fail(generation, "FaceFusion 加载超时；请检查模型、专用 Python 或增加启动等待时间")
-                elif self._ready and now - self._received_at > 15:
-                    self._fail(generation, "FaceFusion 连续 15 秒没有新画面；摄像头或推理已停止，请重新启动")
-
-    def _fail(self, generation: int, message: str) -> None:
-        with self._lock:
-            if generation != self._generation or self._stop_event.is_set():
-                return
-            self._status, self._error = EngineStatus.ERROR, message[:4096]
-            self._latest = None
-            self._stop_event.set()
-            if self._proc is not None:
-                self._request_termination(self._proc)
-
-    def status(self) -> EngineStatus:
-        with self._lock:
-            return self._status
-
-    def read_frame(self) -> EngineFrame | None:
-        with self._lock:
-            frame, self._latest = self._latest, None
-        if frame is not None and frame.meta.get("safe_to_output") is True:
-            age = time.monotonic_ns() - frame.meta["captured_monotonic_ns"]
-            if age > MAX_OUTPUT_AGE_NS or age < 0:
-                # A stalled worker/UI must never revive an old eligible frame.
-                # This is a generous stale-frame cutoff, not a latency promise.
-                frame = EngineFrame(
-                    image=np.full_like(frame.image, 24), fps=frame.fps,
-                    meta={**frame.meta, "face_swapped": False, "safe_to_output": False,
-                          "placeholder": True, "reason": "stale_frame"},
-                )
-        return frame
-
-    def last_error(self) -> str | None:
-        with self._lock:
-            return self._error
-
-    def diagnostic_tail(self) -> str:
-        """Bounded local diagnostic text; redact before sharing outside the device."""
-        with self._lock:
-            return self._stderr_tail
-
-    @staticmethod
-    def _request_termination(proc: subprocess.Popen) -> None:
-        """Kill a stuck worker even when its stdout reader is blocked."""
-        try:
-            proc.terminate()
-        except OSError:
-            pass
-
-        def escalate() -> None:
-            try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                try:
-                    proc.kill()
-                except OSError:
-                    pass
-            except OSError:
-                pass
-
-        threading.Thread(target=escalate, daemon=True, name="facefusion-reaper").start()
-
-    @staticmethod
-    def _reap(proc: subprocess.Popen) -> None:
-        try:
-            if proc.poll() is None:
-                proc.terminate()
-            try:
-                proc.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                proc.kill()
-                proc.wait(timeout=2)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        finally:
-            for stream in (proc.stdin, proc.stdout, proc.stderr):
-                if stream is not None:
-                    try:
-                        stream.close()
-                    except (OSError, ValueError):
-                        pass
-
-    def stop(self) -> None:
-        with self._lock:
-            self._generation += 1
-            self._stop_event.set()
-            proc, self._proc = self._proc, None
-            self._latest, self._ready = None, False
-            self._status = EngineStatus.READY if self._worker_config is not None else EngineStatus.UNAVAILABLE
-        if proc is not None:
-            self._request_termination(proc)
-            # Reader owns wait/kill/close, outside the GUI thread.
-
-    def set_source_faces(self, paths: list[str]) -> None:
-        with self._lock:
-            if self._cfg is None:
-                return
-            cfg = copy.deepcopy(self._cfg)
-        cfg.source_face_paths = list(paths)
-        self.initialize(cfg)
-
-    def shutdown(self) -> None:
-        self.stop()
 
 
 def create_facefusion_engine(root: str | None = None) -> FaceSwapEngine:

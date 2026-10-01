@@ -11,7 +11,7 @@ root = Path(SPECPATH).parent
 datas = copy_metadata("face-swap-studio")
 datas += [
     (str(root / "src" / "face_swap_studio" / "engines" / filename), "face_swap_studio/engines")
-    for filename in ("facefusion_worker.py", "facefusion_protocol.py")
+    for filename in ("facefusion_worker.py", "facefusion_protocol.py", "deepfacelive_worker.py")
 ]
 binaries = []
 hiddenimports = []
